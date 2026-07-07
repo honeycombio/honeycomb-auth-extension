@@ -71,7 +71,7 @@ func (c *Client) Lookup(ctx context.Context, apiKey string) (*AuthInfo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("sending /1/auth request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized:
