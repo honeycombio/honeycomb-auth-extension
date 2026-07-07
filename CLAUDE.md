@@ -1,0 +1,52 @@
+# CLAUDE.md
+
+Guidance for Claude Code (claude.ai/code) when working in this repository.
+
+## What this is
+
+An OpenTelemetry Collector server-authenticator extension that validates the incoming
+`x-honeycomb-team` ingest key against Honeycomb's `/1/auth` endpoint, caches the result, and
+optionally injects the resolved team/environment into `client.Info.Auth`. It is a single Go module
+under `honeycombauthextension/`.
+
+Requires Go 1.25+ (`GOTOOLCHAIN=auto` fetches it). Collector deps are pinned to v1.61.0 (stable) /
+v0.155.0 (unstable) to match `honeycombio/honeycomb-collector-distro`.
+
+## Common commands
+
+```bash
+make test        # go test -race in honeycombauthextension/
+make vet         # go vet
+make lint        # go vet + golangci-lint (if installed), config .golangci.yml
+make generate    # mdatagen from honeycombauthextension/metadata.yaml -> internal/metadata/
+make example     # build + run the example distro (example/run.sh)
+make tidy        # go mod tidy
+```
+
+## Layout
+
+- `honeycombauthextension/` — the component module.
+  - `factory.go` — `extension.NewFactory` wiring (type `honeycombauth`, alpha).
+  - `config.go` — `Config` + `Validate` (endpoint, api_key_headers, timeout, fail_closed,
+    require_ingest_scope, enrich, cache TTLs).
+  - `extension.go` — implements `extensionauth.Server.Authenticate`; header extraction, cache lookup,
+    scope check, enrichment.
+  - `internal/hnyauth/` — `/1/auth` client + `AuthInfo` (ported from Refinery).
+  - `internal/authcache/` — positive/negative TTL cache over `hashicorp/golang-lru/v2` (base package,
+    goroutine-free) with singleflight.
+  - `internal/metadata/` — mdatagen output (do not hand-edit; run `make generate`).
+- `example/` — OCB `builder-config.yaml` + `config.yaml` + `mock_auth.py` + `run.sh` for local e2e.
+
+## Gotchas
+
+- The root `go.work` breaks the OCB build (it cd's into the generated `example/_build` module). Build
+  the example with `GOWORK=off` (already handled in `example/run.sh`).
+- `internal/metadata/` is generated. Change `metadata.yaml` and run `make generate`, don't hand-edit.
+- `Authenticate` is on the receive hot path: keep it fast, rely on the cache; don't add blocking work.
+- The outbound `/1/auth` call always uses `x-honeycomb-team` regardless of which inbound alias
+  (`x-honeycomb-team` / `x-hny-team`) the client used.
+
+## Prior art
+
+Refinery's `/1/auth` + environment cache (`route/route.go`) and Elastic's `apikeyauth` extension
+(external validation + TTL cache) are the reference implementations.

@@ -1,0 +1,22 @@
+extensions:
+  honeycombauth:
+    endpoint: http://localhost:8088   # local mock /1/auth (see mock_auth.py)
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: localhost:4318
+        auth:
+          authenticator: honeycombauth
+
+exporters:
+  debug:
+    verbosity: basic
+
+service:
+  extensions: [honeycombauth]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [debug]

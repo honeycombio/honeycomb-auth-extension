@@ -1,0 +1,7 @@
+_build/
+bin/
+.bin/
+*.out
+*.test
+.DS_Store
+dist/

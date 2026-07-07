@@ -1,0 +1,13 @@
+type: honeycombauth
+
+status:
+  class: extension
+  stability:
+    alpha: [extension]
+  distributions: []
+  codeowners:
+    active: [MikeGoldsmith]
+
+tests:
+  config:
+    endpoint: https://api.honeycomb.io

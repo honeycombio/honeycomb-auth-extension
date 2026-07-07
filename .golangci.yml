@@ -1,0 +1,32 @@
+# golangci-lint config for honeycomb-auth-extension.
+# Moderate set aligned with common OpenTelemetry component practice. Tighten
+# toward the fuller contrib set once run locally.
+version: "2"
+
+issues:
+  max-same-issues: 50
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/honeycombio/honeycomb-auth-extension
+
+linters:
+  enable:
+    - bodyclose
+    - errcheck
+    - errorlint
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - noctx
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
