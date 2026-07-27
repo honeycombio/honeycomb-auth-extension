@@ -1,23 +1,52 @@
 #!/usr/bin/env python3
-"""Minimal mock of Honeycomb's /1/auth for local verification.
+"""Minimal mock of Honeycomb's /1/auth for local verification and e2e tests.
 
-goodkey -> 200 with ingest scope + team/environment; badkey -> 401; else -> 500.
+Keys: goodkey -> 200 (team acme, ingest scope); otherteamkey -> 200 (team
+other-team); noscope -> 200 without ingest scope; badkey -> 401; else -> 500.
+
+POST /down makes every subsequent /1/auth call return 500 (simulates an auth
+backend outage for the stale-serving e2e scenario); POST /up recovers.
 """
 import http.server
 import json
 
-RESP = {
-    "api_key_access": {"events": True},
-    "environment": {"name": "prod", "slug": "prod"},
-    "team": {"name": "acme", "slug": "acme"},
+
+def auth_response(team_name, team_slug, events=True):
+    return {
+        "api_key_access": {"events": events},
+        "environment": {"name": "prod", "slug": "prod"},
+        "team": {"name": team_name, "slug": team_slug},
+    }
+
+
+RESPONSES = {
+    "goodkey": auth_response("acme", "acme"),
+    "otherteamkey": auth_response("Other Team", "other-team"),
+    "noscope": auth_response("acme", "acme", events=False),
 }
+
+down = False
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        global down
+        if self.path in ("/down", "/up"):
+            down = self.path == "/down"
+            self.send_response(204)
+            self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+
     def do_GET(self):
+        if down:
+            self.send_response(500)
+            self.end_headers()
+            return
         key = self.headers.get("x-honeycomb-team", "")
-        if key == "goodkey":
-            body = json.dumps(RESP).encode()
+        if key in RESPONSES:
+            body = json.dumps(RESPONSES[key]).encode()
             self.send_response(200)
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(body)))

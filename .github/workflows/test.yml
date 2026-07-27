@@ -45,6 +45,19 @@ jobs:
           working-directory: honeycombauthextension
           args: --config=../.golangci.yml --timeout=5m
 
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: "honeycombauthextension/go.sum"
+      - name: End-to-end suite
+        run: e2e/run.sh
+
   govulncheck:
     runs-on: ubuntu-latest
     timeout-minutes: 15

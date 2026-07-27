@@ -113,6 +113,9 @@ make test        # unit tests (mock /1/auth)
 make lint
 make generate    # mdatagen from metadata.yaml
 make example     # build + run the example distro (see example/)
+make e2e         # automated end-to-end suite (see e2e/): builds the example
+                 # distro, runs it against the mock, asserts every auth
+                 # scenario's HTTP status, metric outcome, and warn logs
 ```
 
 Prior art this borrows from: Refinery's `/1/auth` + environment cache, and Elastic's `apikeyauth`

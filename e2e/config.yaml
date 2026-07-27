@@ -1,0 +1,30 @@
+# Collector config for the automated e2e suite (see run.sh). Short cache TTLs
+# so the stale-serving scenario doesn't slow the suite down.
+extensions:
+  honeycomb_auth:
+    endpoint: http://localhost:8088   # example/mock_auth.py
+    allowed_teams: [acme]
+    cache:
+      ttl: 2s
+      negative_ttl: 2s
+      stale_ttl: 1m
+      max_keys: 100
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: localhost:4318
+        auth:
+          authenticator: honeycomb_auth
+
+exporters:
+  debug:
+    verbosity: basic
+
+service:
+  extensions: [honeycomb_auth]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      exporters: [debug]

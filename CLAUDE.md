@@ -22,6 +22,8 @@ make vet         # go vet
 make lint        # go vet + golangci-lint (if installed), config .golangci.yml
 make generate    # mdatagen from honeycombauthextension/metadata.yaml -> internal/metadata/
 make example     # build + run the example distro (example/run.sh)
+make e2e         # automated e2e suite (e2e/run.sh): real distro + mock, asserts
+                 # status codes, outcome metrics, warn logs; runs in CI
 make tidy        # go mod tidy
 ```
 
@@ -45,7 +47,11 @@ make tidy        # go mod tidy
 - `internal/tools/` — separate module pinning build tools (mdatagen), the contrib pattern; keeps
   tool deps out of the component module's graph. `go run/install pkg@version` cannot be used for
   mdatagen (its go.mod has replace directives).
-- `example/` — OCB `builder-config.yaml` + `config.yaml` + `mock_auth.py` + `run.sh` for local e2e.
+- `example/` — OCB `builder-config.yaml` + `config.yaml` + `mock_auth.py` + `build.sh`/`run.sh` for
+  interactive use. The mock also serves the e2e suite (POST /down and /up toggle an outage).
+- `e2e/` — automated end-to-end suite (`run.sh` + `config.yaml`): builds the example distro,
+  exercises every auth scenario over real OTLP/HTTP, asserts status codes, the
+  `otelcol_honeycomb_auth_authentications` outcome counters, and the sampled warn logs.
 
 ## Gotchas
 
