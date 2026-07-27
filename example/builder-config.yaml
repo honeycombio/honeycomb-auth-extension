@@ -16,5 +16,7 @@ providers:
   - gomod: go.opentelemetry.io/collector/confmap/provider/fileprovider v1.61.0
   - gomod: go.opentelemetry.io/collector/confmap/provider/envprovider v1.61.0
 
+# Relative to the generated module in ./_build, so the build works anywhere
+# the repo is checked out (including CI).
 replaces:
-  - github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension => /Users/mike/code/honeycomb-auth-extension/honeycombauthextension
+  - github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension => ../../honeycombauthextension
