@@ -8,6 +8,30 @@ status:
   codeowners:
     active: [MikeGoldsmith]
 
+attributes:
+  outcome:
+    description: Result of the authentication attempt.
+    type: string
+    enum:
+      - valid
+      - missing_header
+      - invalid_key
+      - no_ingest_scope
+      - backend_error_fail_open
+      - backend_error_fail_closed
+
+telemetry:
+  metrics:
+    honeycomb_auth.authentications:
+      enabled: true
+      stability: alpha
+      description: Number of authentication attempts, by outcome.
+      unit: "{authentication}"
+      sum:
+        value_type: int
+        monotonic: true
+      attributes: [outcome]
+
 tests:
   config:
     endpoint: https://api.honeycomb.io

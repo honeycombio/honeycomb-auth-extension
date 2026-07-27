@@ -70,6 +70,17 @@ singleflight so a burst of first-time requests for one key makes a single `/1/au
 Outbound calls never follow redirects (the ingest key would otherwise be forwarded to the
 redirect target).
 
+## Telemetry
+
+The extension emits one self-telemetry counter through the Collector's internal metrics:
+
+| Metric | Type | Attributes |
+|---|---|---|
+| `otelcol_honeycomb_auth.authentications` (Prometheus: `otelcol_honeycomb_auth_authentications`) | counter | `outcome`: `valid`, `missing_header`, `invalid_key`, `no_ingest_scope`, `backend_error_fail_open`, `backend_error_fail_closed` |
+
+Every `Authenticate` call records exactly one count. Alert on `backend_error_*` for `/1/auth`
+health.
+
 ### Downstream use of the resolved environment
 
 When `enrich` is on, a processor can read `client.FromContext(ctx).Auth.GetAttribute("honeycomb.environment")`.

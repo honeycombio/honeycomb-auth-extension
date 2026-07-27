@@ -26,11 +26,11 @@ make tidy        # go mod tidy
 ## Layout
 
 - `honeycombauthextension/` — the component module.
-  - `factory.go` — `extension.NewFactory` wiring (type `honeycomb_auth`, alpha).
+  - `factory.go` — `extension.NewFactory` wiring (type `honeycomb_auth`, alpha) + TelemetryBuilder.
   - `config.go` — `Config` + `Validate` (endpoint, api_key_headers, timeout, fail_closed,
     require_ingest_scope, enrich, cache TTLs).
   - `extension.go` — implements `extensionauth.Server.Authenticate`; header extraction, cache lookup,
-    scope check, enrichment.
+    scope check, enrichment, outcome metric (`otelcol_honeycomb_auth.authentications`).
   - `internal/hnyauth/` — `/1/auth` client + `AuthInfo` (ported from Refinery).
   - `internal/authcache/` — positive/negative TTL cache over `hashicorp/golang-lru/v2` (base package,
     goroutine-free) with singleflight.

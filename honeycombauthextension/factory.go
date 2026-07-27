@@ -40,5 +40,9 @@ func createDefaultConfig() component.Config {
 }
 
 func createExtension(_ context.Context, set extension.Settings, cfg component.Config) (extension.Extension, error) {
-	return newExtension(cfg.(*Config), set.Logger), nil
+	telemetry, err := metadata.NewTelemetryBuilder(set.TelemetrySettings)
+	if err != nil {
+		return nil, err
+	}
+	return newExtension(cfg.(*Config), telemetry, set.Logger), nil
 }

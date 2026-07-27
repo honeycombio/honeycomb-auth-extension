@@ -15,10 +15,13 @@ import (
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/extension"
 	"go.opentelemetry.io/collector/extension/extensionauth"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
 
 	"github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension/internal/authcache"
 	"github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension/internal/hnyauth"
+	"github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension/internal/metadata"
 )
 
 var (
@@ -26,16 +29,32 @@ var (
 	_ extensionauth.Server = (*honeycombAuth)(nil)
 )
 
+// Outcome attribute values for the authentications counter. Attribute sets are
+// precomputed because Authenticate is on the receive hot path.
+var (
+	outcomeValid             = outcomeOpt("valid")
+	outcomeMissingHeader     = outcomeOpt("missing_header")
+	outcomeInvalidKey        = outcomeOpt("invalid_key")
+	outcomeNoIngestScope     = outcomeOpt("no_ingest_scope")
+	outcomeBackendFailOpen   = outcomeOpt("backend_error_fail_open")
+	outcomeBackendFailClosed = outcomeOpt("backend_error_fail_closed")
+)
+
+func outcomeOpt(outcome string) metric.AddOption {
+	return metric.WithAttributeSet(attribute.NewSet(attribute.String("outcome", outcome)))
+}
+
 type honeycombAuth struct {
-	cfg    *Config
-	logger *zap.Logger
+	cfg       *Config
+	logger    *zap.Logger
+	telemetry *metadata.TelemetryBuilder
 
 	client *hnyauth.Client
 	cache  *authcache.Cache
 }
 
-func newExtension(cfg *Config, logger *zap.Logger) *honeycombAuth {
-	return &honeycombAuth{cfg: cfg, logger: logger}
+func newExtension(cfg *Config, telemetry *metadata.TelemetryBuilder, logger *zap.Logger) *honeycombAuth {
+	return &honeycombAuth{cfg: cfg, logger: logger, telemetry: telemetry}
 }
 
 func (h *honeycombAuth) Start(context.Context, component.Host) error {
@@ -52,6 +71,9 @@ func (h *honeycombAuth) Shutdown(context.Context) error {
 	if h.client != nil {
 		h.client.Close()
 	}
+	if h.telemetry != nil {
+		h.telemetry.Shutdown()
+	}
 	return nil
 }
 
@@ -60,6 +82,7 @@ func (h *honeycombAuth) Shutdown(context.Context) error {
 func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]string) (context.Context, error) {
 	apiKey := firstHeaderValue(headers, h.cfg.APIKeyHeaders)
 	if apiKey == "" {
+		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeMissingHeader)
 		return ctx, fmt.Errorf("missing or empty api key header (one of %v)", h.cfg.APIKeyHeaders)
 	}
 
@@ -75,19 +98,25 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 	})
 	if err != nil {
 		if errors.Is(err, hnyauth.ErrInvalidKey) {
+			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeInvalidKey)
 			return ctx, fmt.Errorf("invalid honeycomb api key: %w", err)
 		}
 		// Transient failure reaching /1/auth.
 		if h.cfg.FailClosed {
+			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeBackendFailClosed)
 			return ctx, fmt.Errorf("honeycomb auth backend unavailable (fail-closed): %w", err)
 		}
 		h.logger.Warn("honeycomb auth backend unavailable; allowing request (fail-open)", zap.Error(err))
+		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeBackendFailOpen)
 		return ctx, nil
 	}
 
 	if h.cfg.RequireIngestScope && !info.APIKeyAccess.Events {
+		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeNoIngestScope)
 		return ctx, errors.New("honeycomb api key lacks ingest (events) access")
 	}
+
+	h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeValid)
 
 	if h.cfg.Enrich {
 		ctx = enrich(ctx, info)
