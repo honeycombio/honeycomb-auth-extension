@@ -6,10 +6,12 @@ package honeycombauthextension // import "github.com/honeycombio/honeycomb-auth-
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/collector/client"
 	"go.opentelemetry.io/collector/component"
@@ -18,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 
 	"github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension/internal/authcache"
 	"github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension/internal/hnyauth"
@@ -35,6 +38,7 @@ var (
 	outcomeValid             = outcomeOpt("valid")
 	outcomeMissingHeader     = outcomeOpt("missing_header")
 	outcomeInvalidKey        = outcomeOpt("invalid_key")
+	outcomeTeamNotAllowed    = outcomeOpt("team_not_allowed")
 	outcomeNoIngestScope     = outcomeOpt("no_ingest_scope")
 	outcomeBackendFailOpen   = outcomeOpt("backend_error_fail_open")
 	outcomeBackendFailClosed = outcomeOpt("backend_error_fail_closed")
@@ -49,12 +53,24 @@ type honeycombAuth struct {
 	logger    *zap.Logger
 	telemetry *metadata.TelemetryBuilder
 
-	client *hnyauth.Client
-	cache  *authcache.Cache
+	// sampledLogger rate-limits warnings emitted per rejected request, so a
+	// flood of unauthorized traffic can't drown the collector's logs.
+	sampledLogger *zap.Logger
+
+	client       *hnyauth.Client
+	cache        *authcache.Cache
+	allowedTeams map[string]struct{}
 }
 
 func newExtension(cfg *Config, telemetry *metadata.TelemetryBuilder, logger *zap.Logger) *honeycombAuth {
-	return &honeycombAuth{cfg: cfg, logger: logger, telemetry: telemetry}
+	return &honeycombAuth{
+		cfg:       cfg,
+		logger:    logger,
+		telemetry: telemetry,
+		sampledLogger: zap.New(zapcore.NewSamplerWithOptions(
+			logger.Core(), 10*time.Second, 5, 0,
+		)),
+	}
 }
 
 func (h *honeycombAuth) Start(context.Context, component.Host) error {
@@ -64,6 +80,10 @@ func (h *honeycombAuth) Start(context.Context, component.Host) error {
 		return err
 	}
 	h.cache = cache
+	h.allowedTeams = make(map[string]struct{}, len(h.cfg.AllowedTeams))
+	for _, team := range h.cfg.AllowedTeams {
+		h.allowedTeams[strings.ToLower(team)] = struct{}{}
+	}
 	return nil
 }
 
@@ -114,6 +134,20 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 	if h.cfg.RequireIngestScope && !info.APIKeyAccess.Events {
 		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeNoIngestScope)
 		return ctx, errors.New("honeycomb api key lacks ingest (events) access")
+	}
+
+	if len(h.allowedTeams) > 0 {
+		if _, ok := h.allowedTeams[strings.ToLower(info.Team.Slug)]; !ok {
+			h.sampledLogger.Warn("rejecting valid honeycomb api key: team is not in allowed_teams",
+				zap.String("team", info.Team.Name),
+				zap.String("team_slug", info.Team.Slug),
+				zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
+			)
+			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeTeamNotAllowed)
+			// Deliberately indistinguishable from an invalid key to the sender,
+			// and no hint of which teams are allowed.
+			return ctx, errors.New("honeycomb api key is not authorized for this collector")
+		}
 	}
 
 	h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeValid)

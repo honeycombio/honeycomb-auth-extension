@@ -33,6 +33,9 @@ func mockAuthServer(count *int32) *httptest.Server {
 		case "goodkey":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"api_key_access":{"events":true},"environment":{"name":"prod","slug":"prod"},"team":{"name":"acme","slug":"acme"}}`))
+		case "otherteamkey":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"api_key_access":{"events":true},"environment":{"name":"prod","slug":"prod"},"team":{"name":"Other Team","slug":"other-team"}}`))
 		case "noscope":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"api_key_access":{"events":false},"environment":{"name":"prod"},"team":{"name":"acme"}}`))
@@ -240,6 +243,39 @@ func TestAuthenticate_RequireIngestScope(t *testing.T) {
 	_, err := h.Authenticate(context.Background(), headers("noscope"))
 	require.Error(t, err)
 	assert.Equal(t, int64(1), outcomeCount(t, tt, "no_ingest_scope"))
+}
+
+func TestAuthenticate_TeamAllowed(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	// Mixed case in config: matching is case-insensitive on the slug.
+	h, tt := newTestExt(t, srv.URL, func(c *Config) { c.AllowedTeams = []string{"AcMe", "other-team"} })
+
+	ctx, err := h.Authenticate(context.Background(), headers("goodkey"))
+	require.NoError(t, err)
+	assert.Equal(t, "acme", client.FromContext(ctx).Auth.GetAttribute("honeycomb.team"))
+	assert.Equal(t, int64(1), outcomeCount(t, tt, "valid"))
+}
+
+func TestAuthenticate_TeamNotAllowed(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	h, tt := newTestExt(t, srv.URL, func(c *Config) { c.AllowedTeams = []string{"acme"} })
+
+	ctx, err := h.Authenticate(context.Background(), headers("otherteamkey"))
+	require.Error(t, err)
+	// The error must not reveal the allow-list or that the key itself is valid.
+	assert.NotContains(t, err.Error(), "acme")
+	assert.Nil(t, client.FromContext(ctx).Auth, "no enrichment for a rejected request")
+	assert.Equal(t, int64(1), outcomeCount(t, tt, "team_not_allowed"))
+
+	// The underlying key stays positively cached: a second rejection makes no
+	// further /1/auth call.
+	_, err = h.Authenticate(context.Background(), headers("otherteamkey"))
+	require.Error(t, err)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&n))
 }
 
 func TestAuthenticate_TransientFailClosed(t *testing.T) {

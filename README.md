@@ -1,9 +1,10 @@
 # honeycomb-auth-extension
 
 An OpenTelemetry Collector [server authenticator](https://opentelemetry.io/docs/collector/configuration/#authentication)
-extension that validates the incoming `x-honeycomb-team` ingest key against Honeycomb's `/1/auth`
-endpoint, caches the result, and (optionally) injects the resolved team/environment into
-`client.Info.Auth` for downstream components.
+extension (`honeycomb_auth`) that validates the incoming `x-honeycomb-team` ingest key against
+Honeycomb's `/1/auth` endpoint, caches the result, optionally restricts which teams' keys are
+accepted, and (optionally) injects the resolved team/environment into `client.Info.Auth` for
+downstream components.
 
 Because it runs inside the Collector, it is infrastructure-agnostic: the auth check travels with the
 collector and works the same wherever it runs (any cloud, on-prem, or a customer-hosted collector),
@@ -17,12 +18,17 @@ stock Collector auth extension does an external-API lookup (`bearertokenauth` on
 tokens), and load-balancer/edge auth can't call an arbitrary API to validate an opaque key. This
 extension fills that gap, and doubles as an environment resolver (same call).
 
+For a collector hosted for a specific customer, validating that a key is *some* team's valid key is
+not enough: `allowed_teams` pins the collector to the intended team(s) so other teams' keys are
+rejected, with a log and metric to surface abuse.
+
 ## Usage
 
 ```yaml
 extensions:
   honeycomb_auth:
     endpoint: https://api.honeycomb.io   # EU: https://api.eu1.honeycomb.io
+    # allowed_teams: [my-team-slug]       # default: empty (accept any team)
     # api_key_headers: [x-honeycomb-team, x-hny-team]   # default; first non-empty wins
     # timeout: 3s
     # fail_closed: true                   # reject if /1/auth is unreachable
@@ -56,6 +62,7 @@ service:
 | Field | Default | Description |
 |---|---|---|
 | `endpoint` | `https://api.honeycomb.io` | Honeycomb API base for `/1/auth`. Use the EU base for EU teams. |
+| `allowed_teams` | `[]` | Team slugs whose keys are accepted. Empty accepts any team. A valid key from another team is rejected as if invalid (the response does not reveal why), with a Warn log and a `team_not_allowed` metric count. Matching is case-insensitive on the `/1/auth` team slug. |
 | `api_key_headers` | `[x-honeycomb-team, x-hny-team]` | Headers to read the ingest key from, in order; first non-empty wins. The outbound `/1/auth` call always uses `x-honeycomb-team`. |
 | `timeout` | `3s` | Per-call timeout for `/1/auth`. |
 | `fail_closed` | `true` | Reject when `/1/auth` is unreachable. Set `false` to fail open (Honeycomb re-validates downstream). |
@@ -66,9 +73,10 @@ service:
 | `cache.max_keys` | `10000` | Max cached keys (LRU) per table. |
 
 `Authenticate` runs on the receive hot path; results are cached (positive + negative TTLs) with a
-singleflight so a burst of first-time requests for one key makes a single `/1/auth` call.
-Outbound calls never follow redirects (the ingest key would otherwise be forwarded to the
-redirect target).
+singleflight so a burst of first-time requests for one key makes a single `/1/auth` call. The
+`allowed_teams` check runs per request against the cached result, so rejected teams cost no extra
+`/1/auth` traffic. Outbound calls never follow redirects (the ingest key would otherwise be
+forwarded to the redirect target).
 
 ## Telemetry
 
@@ -76,10 +84,12 @@ The extension emits one self-telemetry counter through the Collector's internal 
 
 | Metric | Type | Attributes |
 |---|---|---|
-| `otelcol_honeycomb_auth.authentications` (Prometheus: `otelcol_honeycomb_auth_authentications`) | counter | `outcome`: `valid`, `missing_header`, `invalid_key`, `no_ingest_scope`, `backend_error_fail_open`, `backend_error_fail_closed` |
+| `otelcol_honeycomb_auth.authentications` (Prometheus: `otelcol_honeycomb_auth_authentications`) | counter | `outcome`: `valid`, `missing_header`, `invalid_key`, `team_not_allowed`, `no_ingest_scope`, `backend_error_fail_open`, `backend_error_fail_closed` |
 
-Every `Authenticate` call records exactly one count. Alert on `backend_error_*` for `/1/auth`
-health.
+Every `Authenticate` call records exactly one count. Alert on `team_not_allowed` to spot a
+collector being used with another team's keys, and on `backend_error_*` for `/1/auth` health.
+The per-request team-mismatch Warn log is sampled (at most a handful per 10s) so an abuse flood
+cannot drown the collector's own logs; the counter is the reliable signal.
 
 ### Downstream use of the resolved environment
 

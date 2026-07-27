@@ -16,6 +16,7 @@ attributes:
       - valid
       - missing_header
       - invalid_key
+      - team_not_allowed
       - no_ingest_scope
       - backend_error_fail_open
       - backend_error_fail_closed
@@ -35,3 +36,4 @@ telemetry:
 tests:
   config:
     endpoint: https://api.honeycomb.io
+    allowed_teams: [acme]

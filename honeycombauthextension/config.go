@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
@@ -32,6 +33,10 @@ type Config struct {
 	// APIKeyHeaders are the request headers to read the ingest key from, in
 	// order; the first non-empty one wins. Default [x-honeycomb-team, x-hny-team].
 	APIKeyHeaders []string `mapstructure:"api_key_headers"`
+	// AllowedTeams restricts which teams' keys are accepted: a key whose
+	// /1/auth team slug is not in this list is rejected as if it were invalid.
+	// Empty (default) accepts keys from any team.
+	AllowedTeams []string `mapstructure:"allowed_teams"`
 	// Timeout bounds each /1/auth call. Default 3s.
 	Timeout time.Duration `mapstructure:"timeout"`
 	// FailClosed rejects requests when /1/auth cannot be reached (default true).
@@ -69,6 +74,11 @@ func (c *Config) Validate() error {
 	for _, h := range c.APIKeyHeaders {
 		if h == "" {
 			return errors.New("api_key_headers must not contain empty entries")
+		}
+	}
+	for _, team := range c.AllowedTeams {
+		if strings.TrimSpace(team) == "" {
+			return errors.New("allowed_teams must not contain empty entries")
 		}
 	}
 	if c.Timeout <= 0 {

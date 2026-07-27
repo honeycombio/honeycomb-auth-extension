@@ -1,6 +1,7 @@
 extensions:
   honeycomb_auth:
     endpoint: http://localhost:8088   # local mock /1/auth (see mock_auth.py)
+    # allowed_teams: [acme]           # restrict to specific team slugs (mock returns team acme)
 
 receivers:
   otlp:
