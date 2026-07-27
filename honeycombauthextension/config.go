@@ -5,6 +5,8 @@ package honeycombauthextension // import "github.com/honeycombio/honeycomb-auth-
 
 import (
 	"errors"
+	"fmt"
+	"net/url"
 	"time"
 
 	"go.opentelemetry.io/collector/component"
@@ -53,6 +55,13 @@ var _ component.Config = (*Config)(nil)
 func (c *Config) Validate() error {
 	if c.Endpoint == "" {
 		return errors.New("endpoint must be set")
+	}
+	u, err := url.Parse(c.Endpoint)
+	if err != nil {
+		return fmt.Errorf("invalid endpoint %q: %w", c.Endpoint, err)
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("endpoint must be an http(s) URL with a host, got %q", c.Endpoint)
 	}
 	if len(c.APIKeyHeaders) == 0 {
 		return errors.New("api_key_headers must list at least one header")

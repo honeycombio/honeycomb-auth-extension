@@ -30,13 +30,16 @@ func TestConfigValidate(t *testing.T) {
 		mutate  func(*Config)
 		wantErr string
 	}{
-		"no endpoint":      {func(c *Config) { c.Endpoint = "" }, "endpoint"},
-		"no headers":       {func(c *Config) { c.APIKeyHeaders = nil }, "api_key_headers"},
-		"empty header":     {func(c *Config) { c.APIKeyHeaders = []string{""} }, "api_key_headers"},
-		"bad timeout":      {func(c *Config) { c.Timeout = 0 }, "timeout"},
-		"bad ttl":          {func(c *Config) { c.Cache.TTL = 0 }, "cache.ttl"},
-		"bad negative ttl": {func(c *Config) { c.Cache.NegativeTTL = 0 }, "cache.negative_ttl"},
-		"bad max keys":     {func(c *Config) { c.Cache.MaxKeys = 0 }, "cache.max_keys"},
+		"no endpoint":         {func(c *Config) { c.Endpoint = "" }, "endpoint"},
+		"endpoint no scheme":  {func(c *Config) { c.Endpoint = "api.honeycomb.io" }, "endpoint"},
+		"endpoint bad scheme": {func(c *Config) { c.Endpoint = "ftp://api.honeycomb.io" }, "endpoint"},
+		"endpoint no host":    {func(c *Config) { c.Endpoint = "https://" }, "endpoint"},
+		"no headers":          {func(c *Config) { c.APIKeyHeaders = nil }, "api_key_headers"},
+		"empty header":        {func(c *Config) { c.APIKeyHeaders = []string{""} }, "api_key_headers"},
+		"bad timeout":         {func(c *Config) { c.Timeout = 0 }, "timeout"},
+		"bad ttl":             {func(c *Config) { c.Cache.TTL = 0 }, "cache.ttl"},
+		"bad negative ttl":    {func(c *Config) { c.Cache.NegativeTTL = 0 }, "cache.negative_ttl"},
+		"bad max keys":        {func(c *Config) { c.Cache.MaxKeys = 0 }, "cache.max_keys"},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

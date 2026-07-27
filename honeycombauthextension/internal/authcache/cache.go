@@ -65,7 +65,8 @@ func (c *Cache) lookup(key string) (entry, bool) {
 // Resolve returns the cached result for key, or calls loader exactly once (per
 // concurrent set of callers) on a miss. A returned hnyauth.ErrInvalidKey is
 // cached negatively; any other loader error is NOT cached (so transient
-// auth-backend failures don't stick). key should be a hash of the API key.
+// auth-backend failures don't stick). key should be a digest of the API key
+// (raw digest bytes as a string are fine), never the key itself.
 func (c *Cache) Resolve(key string, loader func() (*hnyauth.AuthInfo, error)) (*hnyauth.AuthInfo, error) {
 	if e, ok := c.lookup(key); ok {
 		if e.invalid {

@@ -7,6 +7,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -83,6 +84,28 @@ func TestAuthenticate_ShortHeaderAlias(t *testing.T) {
 	assert.Equal(t, "prod", client.FromContext(ctx).Auth.GetAttribute("honeycomb.environment"))
 }
 
+func TestAuthenticate_CanonicalHeaderCase(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	h := newTestExt(t, srv.URL, nil)
+
+	// HTTP receivers hand over canonicalized header keys.
+	_, err := h.Authenticate(context.Background(), map[string][]string{"X-Honeycomb-Team": {"goodkey"}})
+	require.NoError(t, err)
+}
+
+func TestAuthenticate_MultiValueHeaderSkipsEmpty(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	h := newTestExt(t, srv.URL, nil)
+
+	// A leading empty value must not mask a real one.
+	_, err := h.Authenticate(context.Background(), map[string][]string{"x-honeycomb-team": {"", "goodkey"}})
+	require.NoError(t, err)
+}
+
 func TestAuthenticate_MissingHeader(t *testing.T) {
 	var n int32
 	srv := mockAuthServer(&n)
@@ -118,6 +141,64 @@ func TestAuthenticate_ValidKeyCached(t *testing.T) {
 		require.NoError(t, err)
 	}
 	assert.Equal(t, int32(1), atomic.LoadInt32(&n), "valid key result should be cached")
+}
+
+func TestAuthenticate_ConcurrentRequestsCollapseToOneLookup(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	h := newTestExt(t, srv.URL, nil)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := h.Authenticate(context.Background(), headers("goodkey"))
+			assert.NoError(t, err)
+		}()
+	}
+	wg.Wait()
+	assert.Equal(t, int32(1), atomic.LoadInt32(&n), "concurrent first requests should singleflight")
+}
+
+func TestAuthenticate_CancelledContextStillValidates(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	h := newTestExt(t, srv.URL, nil)
+
+	// The outbound lookup is detached from the request context: a cancelled
+	// caller must not poison the singleflight result for concurrent requests
+	// (and, as here, the lookup itself must still complete).
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := h.Authenticate(ctx, headers("goodkey"))
+	require.NoError(t, err)
+}
+
+func TestAuthenticate_RedirectNotFollowed(t *testing.T) {
+	var leaked int32
+	attacker := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-honeycomb-team") != "" {
+			atomic.AddInt32(&leaked, 1)
+		}
+	}))
+	defer attacker.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL, http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	h := newTestExt(t, redirector.URL, nil)
+
+	// A redirecting endpoint is treated as a backend error, and the key is
+	// never forwarded to the redirect target.
+	_, err := h.Authenticate(context.Background(), headers("goodkey"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "302")
+	assert.Zero(t, atomic.LoadInt32(&leaked), "api key must not follow redirects")
 }
 
 func TestAuthenticate_RequireIngestScope(t *testing.T) {

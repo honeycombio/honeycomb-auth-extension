@@ -6,7 +6,6 @@ package honeycombauthextension // import "github.com/honeycombio/honeycomb-auth-
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -40,11 +39,7 @@ func newExtension(cfg *Config, logger *zap.Logger) *honeycombAuth {
 }
 
 func (h *honeycombAuth) Start(context.Context, component.Host) error {
-	c, err := hnyauth.New(h.cfg.Endpoint, h.cfg.Timeout)
-	if err != nil {
-		return err
-	}
-	h.client = c
+	h.client = hnyauth.New(h.cfg.Endpoint, h.cfg.Timeout)
 	cache, err := authcache.New(h.cfg.Cache.MaxKeys, h.cfg.Cache.TTL, h.cfg.Cache.NegativeTTL)
 	if err != nil {
 		return err
@@ -53,7 +48,12 @@ func (h *honeycombAuth) Start(context.Context, component.Host) error {
 	return nil
 }
 
-func (h *honeycombAuth) Shutdown(context.Context) error { return nil }
+func (h *honeycombAuth) Shutdown(context.Context) error {
+	if h.client != nil {
+		h.client.Close()
+	}
+	return nil
+}
 
 // Authenticate validates the ingest key on the incoming request. It runs on the
 // receive hot path, so results are cached (see internal/authcache).
@@ -64,10 +64,14 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 	}
 
 	sum := sha256.Sum256([]byte(apiKey))
-	cacheKey := hex.EncodeToString(sum[:])
+	cacheKey := string(sum[:])
 
 	info, err := h.cache.Resolve(cacheKey, func() (*hnyauth.AuthInfo, error) {
-		return h.client.Lookup(ctx, apiKey)
+		// Detached from the request context: the loader's result is shared by
+		// every request collapsed onto this key by the singleflight, so one
+		// cancelled caller must not fail the rest. http.Client.Timeout still
+		// bounds the call.
+		return h.client.Lookup(context.WithoutCancel(ctx), apiKey)
 	})
 	if err != nil {
 		if errors.Is(err, hnyauth.ErrInvalidKey) {
@@ -94,15 +98,16 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 // firstHeaderValue returns the first non-empty value across the given header
 // names, in order. For each name it tolerates canonical (HTTP) and lower-case
 // (gRPC metadata) key forms, which are the only casings those transports
-// produce.
+// produce, and scans all values for a name so a leading empty value doesn't
+// mask a real one.
 func firstHeaderValue(headers map[string][]string, names []string) string {
 	for _, name := range names {
-		v, ok := headers[http.CanonicalHeaderKey(name)]
-		if !ok {
-			v, ok = headers[strings.ToLower(name)]
-		}
-		if ok && len(v) > 0 && v[0] != "" {
-			return v[0]
+		for _, form := range [2]string{http.CanonicalHeaderKey(name), strings.ToLower(name)} {
+			for _, v := range headers[form] {
+				if v != "" {
+					return v
+				}
+			}
 		}
 	}
 	return ""

@@ -67,6 +67,8 @@ service:
 
 `Authenticate` runs on the receive hot path; results are cached (positive + negative TTLs) with a
 singleflight so a burst of first-time requests for one key makes a single `/1/auth` call.
+Outbound calls never follow redirects (the ingest key would otherwise be forwarded to the
+redirect target).
 
 ### Downstream use of the resolved environment
 
