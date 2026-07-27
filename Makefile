@@ -6,7 +6,7 @@ TOOLS_BIN := $(abspath .tools)
 
 .PHONY: test
 test:
-	cd $(COMPONENT) && go test ./...
+	cd $(COMPONENT) && go test -race ./...
 
 .PHONY: vet
 vet:
@@ -14,7 +14,11 @@ vet:
 
 .PHONY: lint
 lint: vet
-	command -v golangci-lint >/dev/null 2>&1 && cd $(COMPONENT) && golangci-lint run ./... || echo "golangci-lint not installed; ran go vet only"
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		cd $(COMPONENT) && golangci-lint run ./...; \
+	else \
+		echo "golangci-lint not installed; ran go vet only"; \
+	fi
 
 .PHONY: tidy
 tidy:
