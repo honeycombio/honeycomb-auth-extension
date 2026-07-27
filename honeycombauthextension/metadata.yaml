@@ -1,4 +1,4 @@
-type: honeycombauth
+type: honeycomb_auth
 
 status:
   class: extension

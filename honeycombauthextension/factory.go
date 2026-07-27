@@ -13,7 +13,7 @@ import (
 	"github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension/internal/metadata"
 )
 
-// NewFactory creates a factory for the honeycombauth extension.
+// NewFactory creates a factory for the honeycomb_auth extension.
 func NewFactory() extension.Factory {
 	return extension.NewFactory(
 		metadata.Type,

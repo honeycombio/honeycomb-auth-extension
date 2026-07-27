@@ -34,7 +34,7 @@ install-tools:
 generate: install-tools
 	cd $(COMPONENT) && $(TOOLS_BIN)/mdatagen metadata.yaml
 
-# Build and run the example distro (OTLP receiver + honeycombauth + debug exporter).
+# Build and run the example distro (OTLP receiver + honeycomb_auth + debug exporter).
 .PHONY: example
 example:
 	cd example && ./run.sh

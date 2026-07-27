@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the example distro (OTLP receiver + honeycombauth + debug exporter) and
+# Build the example distro (OTLP receiver + honeycomb_auth + debug exporter) and
 # run it against a local mock /1/auth. Send OTLP with x-honeycomb-team: goodkey
 # (accepted) or badkey (401).
 set -euo pipefail
@@ -22,4 +22,4 @@ MOCK=$!
 trap 'kill "$MOCK" 2>/dev/null || true' EXIT
 
 echo "running collector (Ctrl-C to stop) ..."
-./_build/otelcol-honeycombauth-example --config config.yaml
+./_build/otelcol-honeycomb-auth-example --config config.yaml

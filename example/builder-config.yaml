@@ -1,6 +1,6 @@
 dist:
-  name: otelcol-honeycombauth-example
-  description: Example Collector distro with the honeycombauth extension
+  name: otelcol-honeycomb-auth-example
+  description: Example Collector distro with the honeycomb_auth extension
   output_path: ./_build
 
 extensions:

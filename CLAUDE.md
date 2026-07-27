@@ -26,7 +26,7 @@ make tidy        # go mod tidy
 ## Layout
 
 - `honeycombauthextension/` — the component module.
-  - `factory.go` — `extension.NewFactory` wiring (type `honeycombauth`, alpha).
+  - `factory.go` — `extension.NewFactory` wiring (type `honeycomb_auth`, alpha).
   - `config.go` — `Config` + `Validate` (endpoint, api_key_headers, timeout, fail_closed,
     require_ingest_scope, enrich, cache TTLs).
   - `extension.go` — implements `extensionauth.Server.Authenticate`; header extraction, cache lookup,

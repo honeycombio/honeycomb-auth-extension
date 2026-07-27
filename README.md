@@ -21,7 +21,7 @@ extension fills that gap, and doubles as an environment resolver (same call).
 
 ```yaml
 extensions:
-  honeycombauth:
+  honeycomb_auth:
     endpoint: https://api.honeycomb.io   # EU: https://api.eu1.honeycomb.io
     # api_key_headers: [x-honeycomb-team, x-hny-team]   # default; first non-empty wins
     # timeout: 3s
@@ -38,13 +38,13 @@ receivers:
     protocols:
       grpc:
         auth:
-          authenticator: honeycombauth
+          authenticator: honeycomb_auth
       http:
         auth:
-          authenticator: honeycombauth
+          authenticator: honeycomb_auth
 
 service:
-  extensions: [honeycombauth]
+  extensions: [honeycomb_auth]
   pipelines:
     traces:
       receivers: [otlp]

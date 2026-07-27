@@ -22,7 +22,7 @@ type CacheConfig struct {
 	MaxKeys int `mapstructure:"max_keys"`
 }
 
-// Config is the configuration for the honeycombauth extension.
+// Config is the configuration for the honeycomb_auth extension.
 type Config struct {
 	// Endpoint is the Honeycomb API base URL that /1/auth is called against.
 	// US: https://api.honeycomb.io (default). EU: https://api.eu1.honeycomb.io.
