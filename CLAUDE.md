@@ -35,6 +35,9 @@ make tidy        # go mod tidy
   - `internal/authcache/` — positive/negative TTL cache over `hashicorp/golang-lru/v2` (base package,
     goroutine-free) with singleflight.
   - `internal/metadata/` — mdatagen output (do not hand-edit; run `make generate`).
+- `internal/tools/` — separate module pinning build tools (mdatagen), the contrib pattern; keeps
+  tool deps out of the component module's graph. `go run/install pkg@version` cannot be used for
+  mdatagen (its go.mod has replace directives).
 - `example/` — OCB `builder-config.yaml` + `config.yaml` + `mock_auth.py` + `run.sh` for local e2e.
 
 ## Gotchas
