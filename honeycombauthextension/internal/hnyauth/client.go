@@ -18,8 +18,8 @@ import (
 )
 
 // ErrInvalidKey means /1/auth returned 401: the key is invalid or revoked.
-// It is distinct from transient/transport errors so the caller can decide
-// fail-open vs fail-closed, and so only invalid keys are negatively cached.
+// It is distinct from transient/transport errors so that only invalid keys are
+// negatively cached, and only transient failures fall back to stale results.
 var ErrInvalidKey = errors.New("honeycomb api key is invalid")
 
 // authKeyHeader is the header /1/auth expects the key on. This is fixed

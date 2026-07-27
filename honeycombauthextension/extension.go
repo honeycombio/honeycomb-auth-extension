@@ -35,13 +35,13 @@ var (
 // Outcome attribute values for the authentications counter. Attribute sets are
 // precomputed because Authenticate is on the receive hot path.
 var (
-	outcomeValid             = outcomeOpt("valid")
-	outcomeMissingHeader     = outcomeOpt("missing_header")
-	outcomeInvalidKey        = outcomeOpt("invalid_key")
-	outcomeTeamNotAllowed    = outcomeOpt("team_not_allowed")
-	outcomeNoIngestScope     = outcomeOpt("no_ingest_scope")
-	outcomeBackendFailOpen   = outcomeOpt("backend_error_fail_open")
-	outcomeBackendFailClosed = outcomeOpt("backend_error_fail_closed")
+	outcomeValid          = outcomeOpt("valid")
+	outcomeValidStale     = outcomeOpt("valid_stale")
+	outcomeMissingHeader  = outcomeOpt("missing_header")
+	outcomeInvalidKey     = outcomeOpt("invalid_key")
+	outcomeTeamNotAllowed = outcomeOpt("team_not_allowed")
+	outcomeNoIngestScope  = outcomeOpt("no_ingest_scope")
+	outcomeBackendError   = outcomeOpt("backend_error")
 )
 
 func outcomeOpt(outcome string) metric.AddOption {
@@ -75,7 +75,7 @@ func newExtension(cfg *Config, telemetry *metadata.TelemetryBuilder, logger *zap
 
 func (h *honeycombAuth) Start(context.Context, component.Host) error {
 	h.client = hnyauth.New(h.cfg.Endpoint, h.cfg.Timeout)
-	cache, err := authcache.New(h.cfg.Cache.MaxKeys, h.cfg.Cache.TTL, h.cfg.Cache.NegativeTTL)
+	cache, err := authcache.New(h.cfg.Cache.MaxKeys, h.cfg.Cache.TTL, h.cfg.Cache.NegativeTTL, h.cfg.Cache.StaleTTL)
 	if err != nil {
 		return err
 	}
@@ -109,7 +109,7 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 	sum := sha256.Sum256([]byte(apiKey))
 	cacheKey := string(sum[:])
 
-	info, err := h.cache.Resolve(cacheKey, func() (*hnyauth.AuthInfo, error) {
+	info, stale, err := h.cache.Resolve(cacheKey, func() (*hnyauth.AuthInfo, error) {
 		// Detached from the request context: the loader's result is shared by
 		// every request collapsed onto this key by the singleflight, so one
 		// cancelled caller must not fail the rest. http.Client.Timeout still
@@ -121,14 +121,12 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeInvalidKey)
 			return ctx, fmt.Errorf("invalid honeycomb api key: %w", err)
 		}
-		// Transient failure reaching /1/auth.
-		if h.cfg.FailClosed {
-			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeBackendFailClosed)
-			return ctx, fmt.Errorf("honeycomb auth backend unavailable (fail-closed): %w", err)
-		}
-		h.logger.Warn("honeycomb auth backend unavailable; allowing request (fail-open)", zap.Error(err))
-		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeBackendFailOpen)
-		return ctx, nil
+		// Transient failure reaching /1/auth with no stale result to fall
+		// back on: reject. Keys validated within cache.stale_ttl are served
+		// stale instead (see internal/authcache), so this only hits senders
+		// unknown to this collector during an auth-backend outage.
+		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeBackendError)
+		return ctx, fmt.Errorf("honeycomb auth backend unavailable: %w", err)
 	}
 
 	if h.cfg.RequireIngestScope && !info.APIKeyAccess.Events {
@@ -150,7 +148,15 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 		}
 	}
 
-	h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeValid)
+	if stale {
+		h.sampledLogger.Warn("serving stale auth result; /1/auth unreachable",
+			zap.String("team_slug", info.Team.Slug),
+			zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
+		)
+		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeValidStale)
+	} else {
+		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeValid)
+	}
 
 	if h.cfg.Enrich {
 		ctx = enrich(ctx, info)

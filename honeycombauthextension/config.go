@@ -19,8 +19,15 @@ type CacheConfig struct {
 	// upper bound on how long a revoked key keeps working. Default 5m.
 	TTL time.Duration `mapstructure:"ttl"`
 	// NegativeTTL is how long an invalid-key (401) result is cached. Keep it
-	// short so a rotated/fixed key recovers quickly. Default 30s.
+	// short so a rotated/fixed key recovers quickly. It is also the retry
+	// interval for revalidating a result served stale. Default 30s.
 	NegativeTTL time.Duration `mapstructure:"negative_ttl"`
+	// StaleTTL is how long past a successful validation a cached result may
+	// still be served if /1/auth is unreachable when it is due for refresh,
+	// so an auth-backend outage does not drop established traffic. Requests
+	// with no (stale) cached result are rejected during an outage. 0 disables
+	// stale serving. Default 1h.
+	StaleTTL time.Duration `mapstructure:"stale_ttl"`
 	// MaxKeys bounds the number of cached keys (LRU). Default 10000.
 	MaxKeys int `mapstructure:"max_keys"`
 }
@@ -39,9 +46,6 @@ type Config struct {
 	AllowedTeams []string `mapstructure:"allowed_teams"`
 	// Timeout bounds each /1/auth call. Default 3s.
 	Timeout time.Duration `mapstructure:"timeout"`
-	// FailClosed rejects requests when /1/auth cannot be reached (default true).
-	// Set false to fail open (allow through; Honeycomb re-validates downstream).
-	FailClosed bool `mapstructure:"fail_closed"`
 	// RequireIngestScope rejects keys whose api_key_access.events is false (default true).
 	RequireIngestScope bool `mapstructure:"require_ingest_scope"`
 	// Enrich injects the resolved team/environment into client.Info.Auth for
@@ -89,6 +93,9 @@ func (c *Config) Validate() error {
 	}
 	if c.Cache.NegativeTTL <= 0 {
 		return errors.New("cache.negative_ttl must be positive")
+	}
+	if c.Cache.StaleTTL < 0 {
+		return errors.New("cache.stale_ttl must not be negative")
 	}
 	if c.Cache.MaxKeys <= 0 {
 		return errors.New("cache.max_keys must be positive")

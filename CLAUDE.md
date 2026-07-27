@@ -30,14 +30,18 @@ make tidy        # go mod tidy
 - `honeycombauthextension/` — the component module.
   - `factory.go` — `extension.NewFactory` wiring (type `honeycomb_auth`, alpha) + TelemetryBuilder.
   - `config.go` — `Config` + `Validate` (endpoint, api_key_headers, allowed_teams, timeout,
-    fail_closed, require_ingest_scope, enrich, cache TTLs).
+    require_ingest_scope, enrich, cache TTLs incl. stale_ttl).
   - `extension.go` — implements `extensionauth.Server.Authenticate`; header extraction, cache lookup,
     scope check, team allow-list, enrichment, outcome metric
     (`otelcol_honeycomb_auth.authentications`), sampled warn logs.
-  - `internal/hnyauth/` — `/1/auth` client + `AuthInfo` (ported from Refinery).
+  - `internal/hnyauth/` — `/1/auth` client + `AuthInfo` (ported from Refinery). Owns its transport;
+    never follows redirects (the key would be forwarded to the redirect target).
   - `internal/authcache/` — positive/negative TTL cache over `hashicorp/golang-lru/v2` (base package,
-    goroutine-free) with singleflight.
-  - `internal/metadata/` — mdatagen output (do not hand-edit; run `make generate`).
+    goroutine-free) with singleflight. Serves stale positive results (within `stale_ttl`) when
+    revalidation fails transiently; there is deliberately NO fail-open, so unknown keys are
+    rejected during an auth-backend outage.
+  - `internal/metadata/`, `internal/metadatatest/` — mdatagen output (do not hand-edit; run
+    `make generate`).
 - `internal/tools/` — separate module pinning build tools (mdatagen), the contrib pattern; keeps
   tool deps out of the component module's graph. `go run/install pkg@version` cannot be used for
   mdatagen (its go.mod has replace directives).

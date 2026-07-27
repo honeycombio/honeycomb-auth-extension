@@ -17,11 +17,11 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, []string{"x-honeycomb-team", "x-hny-team"}, cfg.APIKeyHeaders)
 	assert.Empty(t, cfg.AllowedTeams)
 	assert.Equal(t, 3*time.Second, cfg.Timeout)
-	assert.True(t, cfg.FailClosed)
 	assert.True(t, cfg.RequireIngestScope)
 	assert.True(t, cfg.Enrich)
 	assert.Equal(t, 5*time.Minute, cfg.Cache.TTL)
 	assert.Equal(t, 30*time.Second, cfg.Cache.NegativeTTL)
+	assert.Equal(t, time.Hour, cfg.Cache.StaleTTL)
 	assert.Equal(t, 10000, cfg.Cache.MaxKeys)
 	require.NoError(t, cfg.Validate())
 }
@@ -41,6 +41,7 @@ func TestConfigValidate(t *testing.T) {
 		"bad timeout":         {func(c *Config) { c.Timeout = 0 }, "timeout"},
 		"bad ttl":             {func(c *Config) { c.Cache.TTL = 0 }, "cache.ttl"},
 		"bad negative ttl":    {func(c *Config) { c.Cache.NegativeTTL = 0 }, "cache.negative_ttl"},
+		"bad stale ttl":       {func(c *Config) { c.Cache.StaleTTL = -time.Second }, "cache.stale_ttl"},
 		"bad max keys":        {func(c *Config) { c.Cache.MaxKeys = 0 }, "cache.max_keys"},
 	}
 	for name, tc := range tests {

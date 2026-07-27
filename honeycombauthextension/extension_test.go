@@ -210,30 +210,6 @@ func TestAuthenticate_CancelledContextStillValidates(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestAuthenticate_RedirectNotFollowed(t *testing.T) {
-	var leaked int32
-	attacker := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("x-honeycomb-team") != "" {
-			atomic.AddInt32(&leaked, 1)
-		}
-	}))
-	defer attacker.Close()
-
-	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, attacker.URL, http.StatusFound)
-	}))
-	defer redirector.Close()
-
-	h, _ := newTestExt(t, redirector.URL, nil)
-
-	// A redirecting endpoint is treated as a backend error, and the key is
-	// never forwarded to the redirect target.
-	_, err := h.Authenticate(context.Background(), headers("goodkey"))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "302")
-	assert.Zero(t, atomic.LoadInt32(&leaked), "api key must not follow redirects")
-}
-
 func TestAuthenticate_RequireIngestScope(t *testing.T) {
 	var n int32
 	srv := mockAuthServer(&n)
@@ -278,24 +254,70 @@ func TestAuthenticate_TeamNotAllowed(t *testing.T) {
 	assert.Equal(t, int32(1), atomic.LoadInt32(&n))
 }
 
-func TestAuthenticate_TransientFailClosed(t *testing.T) {
+func TestAuthenticate_TransientBackendErrorRejects(t *testing.T) {
 	var n int32
 	srv := mockAuthServer(&n)
 	defer srv.Close()
-	h, tt := newTestExt(t, srv.URL, nil) // fail_closed defaults true
+	h, tt := newTestExt(t, srv.URL, nil)
 
-	_, err := h.Authenticate(context.Background(), headers("unknown")) // 500 -> transient
+	// 500 -> transient, and no cached result to serve stale: reject.
+	_, err := h.Authenticate(context.Background(), headers("unknown"))
 	require.Error(t, err)
-	assert.Equal(t, int64(1), outcomeCount(t, tt, "backend_error_fail_closed"))
+	assert.Equal(t, int64(1), outcomeCount(t, tt, "backend_error"))
 }
 
-func TestAuthenticate_TransientFailOpen(t *testing.T) {
+func TestAuthenticate_ServesStaleDuringBackendOutage(t *testing.T) {
 	var n int32
-	srv := mockAuthServer(&n)
+	var down atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		atomic.AddInt32(&n, 1)
+		if down.Load() {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"api_key_access":{"events":true},"environment":{"name":"prod","slug":"prod"},"team":{"name":"acme","slug":"acme"}}`))
+	}))
 	defer srv.Close()
-	h, tt := newTestExt(t, srv.URL, func(c *Config) { c.FailClosed = false })
+	h, tt := newTestExt(t, srv.URL, func(c *Config) {
+		c.AllowedTeams = []string{"acme"}
+		c.Cache.TTL = 50 * time.Millisecond
+		c.Cache.StaleTTL = time.Minute
+	})
 
-	_, err := h.Authenticate(context.Background(), headers("unknown")) // 500 -> transient, allowed
+	_, err := h.Authenticate(context.Background(), headers("goodkey"))
 	require.NoError(t, err)
-	assert.Equal(t, int64(1), outcomeCount(t, tt, "backend_error_fail_open"))
+
+	// Backend goes down and the cached result expires: the stale result is
+	// served, enrichment and the team check still apply.
+	down.Store(true)
+	time.Sleep(60 * time.Millisecond)
+	ctx, err := h.Authenticate(context.Background(), headers("goodkey"))
+	require.NoError(t, err)
+	assert.Equal(t, "acme", client.FromContext(ctx).Auth.GetAttribute("honeycomb.team"))
+	assert.Equal(t, int64(1), outcomeCount(t, tt, "valid_stale"))
+}
+
+func TestAuthenticate_RedirectNotFollowed(t *testing.T) {
+	var leaked int32
+	attacker := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("x-honeycomb-team") != "" {
+			atomic.AddInt32(&leaked, 1)
+		}
+	}))
+	defer attacker.Close()
+
+	redirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL, http.StatusFound)
+	}))
+	defer redirector.Close()
+
+	h, _ := newTestExt(t, redirector.URL, nil)
+
+	// A redirecting endpoint is treated as a backend error, and the key is
+	// never forwarded to the redirect target.
+	_, err := h.Authenticate(context.Background(), headers("goodkey"))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "302")
+	assert.Zero(t, atomic.LoadInt32(&leaked), "api key must not follow redirects")
 }

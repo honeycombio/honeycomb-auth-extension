@@ -2,6 +2,11 @@ extensions:
   honeycomb_auth:
     endpoint: http://localhost:8088   # local mock /1/auth (see mock_auth.py)
     # allowed_teams: [acme]           # restrict to specific team slugs (mock returns team acme)
+    # cache:
+    #   ttl: 5m                       # positive cache
+    #   negative_ttl: 30s             # invalid-key cache; also stale retry interval
+    #   stale_ttl: 1h                 # serve last-good result while /1/auth is down (0 disables)
+    #   max_keys: 10000
 
 receivers:
   otlp:
