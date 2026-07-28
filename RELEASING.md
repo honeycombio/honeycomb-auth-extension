@@ -15,9 +15,10 @@ tags will not resolve as module versions.
 3. Once merged, fetch the updated `main` branch and tag it with the new version:
 
     ```sh
-    git tag -a honeycombauthextension/v1.2.3 -m "honeycombauthextension/v1.2.3"
-    git push origin honeycombauthextension/v1.2.3
+    make release VERSION=v1.2.3
     ```
+
+    (equivalent to `git tag -a honeycombauthextension/v1.2.3 -m ... && git push origin honeycombauthextension/v1.2.3`)
 
 4. Pushing the tag triggers the release workflow, which runs the test suite and publishes a
    GitHub release with generated notes and module checksums.

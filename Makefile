@@ -43,3 +43,14 @@ example:
 .PHONY: e2e
 e2e:
 	./e2e/run.sh
+
+# Tag and push a release. Go requires subdirectory-module tags to carry the
+# directory prefix; this target handles that so nobody has to remember it.
+# Usage: make release VERSION=v0.1.0
+.PHONY: release
+release:
+ifndef VERSION
+	$(error VERSION is required, e.g. make release VERSION=v0.1.0)
+endif
+	git tag -a "$(COMPONENT)/$(VERSION)" -m "$(COMPONENT)/$(VERSION)"
+	git push origin "$(COMPONENT)/$(VERSION)"
