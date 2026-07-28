@@ -11,8 +11,10 @@ team/environment into `client.Info.Auth`. It is a single Go module under `honeyc
 (directory keeps the concatenated name per upstream convention, e.g. `headers_setter` in
 `headerssetterextension/`).
 
-Requires Go 1.25+ (`GOTOOLCHAIN=auto` fetches it). Collector deps are pinned to v1.61.0 (stable) /
-v0.155.0 (unstable) to match `honeycombio/honeycomb-collector-distro`.
+Requires Go 1.25+ (`GOTOOLCHAIN=auto` fetches it). Collector deps are pinned to v1.63.0 (stable) /
+v0.157.0 (unstable) to match `honeycombio/honeycomb-collector-distro` (check its
+`builder-config.yaml` when bumping; update go.mod, internal/tools, and the example OCB version
+together).
 
 ## Common commands
 
