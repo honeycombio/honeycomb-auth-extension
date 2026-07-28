@@ -1,6 +1,6 @@
 # honeycomb-auth-extension changelog
 
-## honeycombauthextension/v0.1.0 (unreleased)
+## honeycombauthextension/v0.1.0 (2026-07-28)
 
 Initial release of the `honeycomb_auth` server-authenticator extension.
 
