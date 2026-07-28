@@ -4,6 +4,8 @@ extensions:
   honeycomb_auth:
     endpoint: http://localhost:8088   # example/mock_auth.py
     allowed_teams: [acme]
+    allowed_environments: [prod]
+    # allow_classic defaults true: classickey passes despite allowed_environments
     cache:
       ttl: 2s
       negative_ttl: 2s

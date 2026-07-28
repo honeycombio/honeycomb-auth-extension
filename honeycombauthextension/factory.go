@@ -28,6 +28,7 @@ func createDefaultConfig() component.Config {
 		Endpoint:           "https://api.honeycomb.io",
 		APIKeyHeaders:      []string{"x-honeycomb-team", "x-hny-team"},
 		Timeout:            3 * time.Second,
+		AllowClassic:       true,
 		RequireIngestScope: true,
 		Enrich:             true,
 		Cache: CacheConfig{

@@ -36,6 +36,12 @@ func mockAuthServer(count *int32) *httptest.Server {
 		case "otherteamkey":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"api_key_access":{"events":true},"environment":{"name":"prod","slug":"prod"},"team":{"name":"Other Team","slug":"other-team"}}`))
+		case "otherenvkey":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"api_key_access":{"events":true},"environment":{"name":"Staging","slug":"staging"},"team":{"name":"acme","slug":"acme"}}`))
+		case "classickey":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"api_key_access":{"events":true},"environment":{"name":"","slug":""},"team":{"name":"acme","slug":"acme"}}`))
 		case "noscope":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"api_key_access":{"events":false},"environment":{"name":"prod"},"team":{"name":"acme"}}`))
@@ -252,6 +258,67 @@ func TestAuthenticate_TeamNotAllowed(t *testing.T) {
 	_, err = h.Authenticate(context.Background(), headers("otherteamkey"))
 	require.Error(t, err)
 	assert.Equal(t, int32(1), atomic.LoadInt32(&n))
+}
+
+func TestAuthenticate_EnvironmentAllowed(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	// Mixed case in config: matching is case-insensitive on the slug.
+	h, tt := newTestExt(t, srv.URL, func(c *Config) { c.AllowedEnvironments = []string{"PROD"} })
+
+	ctx, err := h.Authenticate(context.Background(), headers("goodkey")) // env slug prod
+	require.NoError(t, err)
+	assert.Equal(t, "prod", client.FromContext(ctx).Auth.GetAttribute("honeycomb.environment.slug"))
+	assert.Equal(t, int64(1), outcomeCount(t, tt, "valid"))
+}
+
+func TestAuthenticate_EnvironmentNotAllowed(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	h, tt := newTestExt(t, srv.URL, func(c *Config) { c.AllowedEnvironments = []string{"prod"} })
+
+	ctx, err := h.Authenticate(context.Background(), headers("otherenvkey")) // env slug staging
+	require.Error(t, err)
+	// The error must not reveal the allow-list.
+	assert.NotContains(t, err.Error(), "prod")
+	assert.Nil(t, client.FromContext(ctx).Auth, "no enrichment for a rejected request")
+	assert.Equal(t, int64(1), outcomeCount(t, tt, "environment_not_allowed"))
+
+	// The key stays positively cached: rejection makes no further /1/auth call.
+	_, err = h.Authenticate(context.Background(), headers("otherenvkey"))
+	require.Error(t, err)
+	assert.Equal(t, int32(1), atomic.LoadInt32(&n))
+}
+
+func TestAuthenticate_ClassicAllowedByDefault(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	// Classic keys have no environment, so the env list must not apply to them.
+	h, tt := newTestExt(t, srv.URL, func(c *Config) { c.AllowedEnvironments = []string{"prod"} })
+
+	_, err := h.Authenticate(context.Background(), headers("classickey"))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), outcomeCount(t, tt, "valid"))
+}
+
+func TestAuthenticate_ClassicDenied(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	// allow_classic is an independent gate: no allowed_environments needed.
+	h, tt := newTestExt(t, srv.URL, func(c *Config) { c.AllowClassic = false })
+
+	ctx, err := h.Authenticate(context.Background(), headers("classickey"))
+	require.Error(t, err)
+	assert.Nil(t, client.FromContext(ctx).Auth)
+	assert.Equal(t, int64(1), outcomeCount(t, tt, "classic_not_allowed"))
+
+	// Non-classic keys are unaffected by allow_classic.
+	_, err = h.Authenticate(context.Background(), headers("goodkey"))
+	require.NoError(t, err)
 }
 
 func TestAuthenticate_TransientBackendErrorRejects(t *testing.T) {

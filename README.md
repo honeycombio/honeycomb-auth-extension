@@ -29,6 +29,8 @@ extensions:
   honeycomb_auth:
     endpoint: https://api.honeycomb.io   # EU: https://api.eu1.honeycomb.io
     # allowed_teams: [my-team-slug]       # default: empty (accept any team)
+    # allowed_environments: [production]  # default: empty (accept any environment)
+    # allow_classic: true                 # accept Classic keys (they have no environment)
     # api_key_headers: [x-honeycomb-team, x-hny-team]   # default; first non-empty wins
     # timeout: 3s
     # require_ingest_scope: true          # require api_key_access.events
@@ -63,6 +65,8 @@ service:
 |---|---|---|
 | `endpoint` | `https://api.honeycomb.io` | Honeycomb API base for `/1/auth`. Use the EU base for EU teams. |
 | `allowed_teams` | `[]` | Team slugs whose keys are accepted. Empty accepts any team. A valid key from another team is rejected as if invalid (the response does not reveal why), with a Warn log and a `team_not_allowed` metric count. Matching is case-insensitive on the `/1/auth` team slug. |
+| `allowed_environments` | `[]` | Environment slugs whose keys are accepted; same semantics as `allowed_teams` (`environment_not_allowed` outcome). Classic keys have no environment and are NOT subject to this list; gate them with `allow_classic`. |
+| `allow_classic` | `true` | Accept Honeycomb Classic keys (their `/1/auth` environment values are empty). Set `false` to reject them (`classic_not_allowed` outcome); applies whether or not `allowed_environments` is set. |
 | `api_key_headers` | `[x-honeycomb-team, x-hny-team]` | Headers to read the ingest key from, in order; first non-empty wins. The outbound `/1/auth` call always uses `x-honeycomb-team`. |
 | `timeout` | `3s` | Per-call timeout for `/1/auth`. |
 | `require_ingest_scope` | `true` | Reject keys without `api_key_access.events`. |
@@ -74,8 +78,8 @@ service:
 
 `Authenticate` runs on the receive hot path; results are cached (positive + negative TTLs) with a
 singleflight so a burst of first-time requests for one key makes a single `/1/auth` call. The
-`allowed_teams` check runs per request against the cached result, so rejected teams cost no extra
-`/1/auth` traffic. Outbound calls never follow redirects (the ingest key would otherwise be
+`allowed_teams`/`allowed_environments`/`allow_classic` checks run per request against the cached
+result, so rejected keys cost no extra `/1/auth` traffic. Outbound calls never follow redirects (the ingest key would otherwise be
 forwarded to the redirect target).
 
 ### Behavior during a `/1/auth` outage
@@ -93,7 +97,7 @@ The extension emits one self-telemetry counter through the Collector's internal 
 
 | Metric | Type | Attributes |
 |---|---|---|
-| `otelcol_honeycomb_auth.authentications` (Prometheus: `otelcol_honeycomb_auth_authentications`) | counter | `outcome`: `valid`, `valid_stale`, `missing_header`, `invalid_key`, `team_not_allowed`, `no_ingest_scope`, `backend_error` |
+| `otelcol_honeycomb_auth.authentications` (Prometheus: `otelcol_honeycomb_auth_authentications`) | counter | `outcome`: `valid`, `valid_stale`, `missing_header`, `invalid_key`, `team_not_allowed`, `environment_not_allowed`, `classic_not_allowed`, `no_ingest_scope`, `backend_error` |
 
 Every `Authenticate` call records exactly one count. Alert on `team_not_allowed` to spot a
 collector being used with another team's keys, and on `valid_stale`/`backend_error` for `/1/auth`

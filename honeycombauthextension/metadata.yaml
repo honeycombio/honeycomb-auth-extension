@@ -18,6 +18,8 @@ attributes:
       - missing_header
       - invalid_key
       - team_not_allowed
+      - environment_not_allowed
+      - classic_not_allowed
       - no_ingest_scope
       - backend_error
 
@@ -37,6 +39,8 @@ tests:
   config:
     endpoint: https://api.honeycomb.io
     allowed_teams: [acme]
+    allowed_environments: [prod]
+    allow_classic: true
     cache:
       ttl: 5m
       negative_ttl: 30s

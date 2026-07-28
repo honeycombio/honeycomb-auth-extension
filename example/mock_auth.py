@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Minimal mock of Honeycomb's /1/auth for local verification and e2e tests.
 
-Keys: goodkey -> 200 (team acme, ingest scope); otherteamkey -> 200 (team
-other-team); noscope -> 200 without ingest scope; badkey -> 401; else -> 500.
+Keys: goodkey -> 200 (team acme, env prod, ingest scope); otherteamkey -> 200
+(team other-team); otherenvkey -> 200 (env staging); classickey -> 200 (Classic:
+empty environment values); noscope -> 200 without ingest scope; badkey -> 401;
+else -> 500.
 
 POST /down makes every subsequent /1/auth call return 500 (simulates an auth
 backend outage for the stale-serving e2e scenario); POST /up recovers.
@@ -11,10 +13,10 @@ import http.server
 import json
 
 
-def auth_response(team_name, team_slug, events=True):
+def auth_response(team_name, team_slug, events=True, env_name="prod", env_slug="prod"):
     return {
         "api_key_access": {"events": events},
-        "environment": {"name": "prod", "slug": "prod"},
+        "environment": {"name": env_name, "slug": env_slug},
         "team": {"name": team_name, "slug": team_slug},
     }
 
@@ -22,6 +24,9 @@ def auth_response(team_name, team_slug, events=True):
 RESPONSES = {
     "goodkey": auth_response("acme", "acme"),
     "otherteamkey": auth_response("Other Team", "other-team"),
+    "otherenvkey": auth_response("acme", "acme", env_name="Staging", env_slug="staging"),
+    # Classic keys return empty strings for both environment values.
+    "classickey": auth_response("acme", "acme", env_name="", env_slug=""),
     "noscope": auth_response("acme", "acme", events=False),
 }
 

@@ -40,6 +40,8 @@ var (
 	outcomeMissingHeader  = outcomeOpt("missing_header")
 	outcomeInvalidKey     = outcomeOpt("invalid_key")
 	outcomeTeamNotAllowed = outcomeOpt("team_not_allowed")
+	outcomeEnvNotAllowed  = outcomeOpt("environment_not_allowed")
+	outcomeClassicDenied  = outcomeOpt("classic_not_allowed")
 	outcomeNoIngestScope  = outcomeOpt("no_ingest_scope")
 	outcomeBackendError   = outcomeOpt("backend_error")
 )
@@ -60,6 +62,7 @@ type honeycombAuth struct {
 	client       *hnyauth.Client
 	cache        *authcache.Cache
 	allowedTeams map[string]struct{}
+	allowedEnvs  map[string]struct{}
 }
 
 func newExtension(cfg *Config, telemetry *metadata.TelemetryBuilder, logger *zap.Logger) *honeycombAuth {
@@ -83,6 +86,10 @@ func (h *honeycombAuth) Start(context.Context, component.Host) error {
 	h.allowedTeams = make(map[string]struct{}, len(h.cfg.AllowedTeams))
 	for _, team := range h.cfg.AllowedTeams {
 		h.allowedTeams[strings.ToLower(team)] = struct{}{}
+	}
+	h.allowedEnvs = make(map[string]struct{}, len(h.cfg.AllowedEnvironments))
+	for _, env := range h.cfg.AllowedEnvironments {
+		h.allowedEnvs[strings.ToLower(env)] = struct{}{}
 	}
 	return nil
 }
@@ -144,6 +151,30 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeTeamNotAllowed)
 			// Deliberately indistinguishable from an invalid key to the sender,
 			// and no hint of which teams are allowed.
+			return ctx, errors.New("honeycomb api key is not authorized for this collector")
+		}
+	}
+
+	// Classic keys carry no environment (both /1/auth environment values are
+	// empty strings), so they get their own gate instead of the env list.
+	if info.Environment.Slug == "" {
+		if !h.cfg.AllowClassic {
+			h.sampledLogger.Warn("rejecting valid honeycomb api key: classic keys are not allowed",
+				zap.String("team_slug", info.Team.Slug),
+				zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
+			)
+			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeClassicDenied)
+			return ctx, errors.New("honeycomb api key is not authorized for this collector")
+		}
+	} else if len(h.allowedEnvs) > 0 {
+		if _, ok := h.allowedEnvs[strings.ToLower(info.Environment.Slug)]; !ok {
+			h.sampledLogger.Warn("rejecting valid honeycomb api key: environment is not in allowed_environments",
+				zap.String("team_slug", info.Team.Slug),
+				zap.String("environment", info.Environment.Name),
+				zap.String("environment_slug", info.Environment.Slug),
+				zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
+			)
+			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeEnvNotAllowed)
 			return ctx, errors.New("honeycomb api key is not authorized for this collector")
 		}
 	}

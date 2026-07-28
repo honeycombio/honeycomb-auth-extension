@@ -2,6 +2,8 @@ extensions:
   honeycomb_auth:
     endpoint: http://localhost:8088   # local mock /1/auth (see mock_auth.py)
     # allowed_teams: [acme]           # restrict to specific team slugs (mock returns team acme)
+    # allowed_environments: [prod]    # restrict to env slugs (classic keys exempt; see allow_classic)
+    # allow_classic: true             # accept Classic keys (no environment)
     # cache:
     #   ttl: 5m                       # positive cache
     #   negative_ttl: 30s             # invalid-key cache; also stale retry interval

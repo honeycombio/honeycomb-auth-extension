@@ -33,8 +33,9 @@ make tidy        # go mod tidy
 
 - `honeycombauthextension/` — the component module.
   - `factory.go` — `extension.NewFactory` wiring (type `honeycomb_auth`, alpha) + TelemetryBuilder.
-  - `config.go` — `Config` + `Validate` (endpoint, api_key_headers, allowed_teams, timeout,
-    require_ingest_scope, enrich, cache TTLs incl. stale_ttl).
+  - `config.go` — `Config` + `Validate` (endpoint, api_key_headers, allowed_teams,
+    allowed_environments, allow_classic, timeout, require_ingest_scope, enrich, cache TTLs incl.
+    stale_ttl).
   - `extension.go` — implements `extensionauth.Server.Authenticate`; header extraction, cache lookup,
     scope check, team allow-list, enrichment, outcome metric
     (`otelcol_honeycomb_auth.authentications`), sampled warn logs.
@@ -65,8 +66,11 @@ make tidy        # go mod tidy
   (`x-honeycomb-team` / `x-hny-team`) the client used.
 - The outbound lookup runs under `context.WithoutCancel`: the singleflight result is shared, so one
   cancelled caller must not fail the collapsed peers. Don't reattach request-cancellation there.
-- The `allowed_teams` check is per-request over the *cached* AuthInfo (like the scope check), not
-  part of the cache key/value; keep the cache config-agnostic.
+- The `allowed_teams`/`allowed_environments`/`allow_classic` checks are per-request over the
+  *cached* AuthInfo (like the scope check), not part of the cache key/value; keep the cache
+  config-agnostic.
+- Classic keys return empty strings for BOTH `/1/auth` environment values; they are detected by
+  empty env slug, gated only by `allow_classic`, and never matched against `allowed_environments`.
 
 ## Prior art
 

@@ -16,6 +16,8 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, "https://api.honeycomb.io", cfg.Endpoint)
 	assert.Equal(t, []string{"x-honeycomb-team", "x-hny-team"}, cfg.APIKeyHeaders)
 	assert.Empty(t, cfg.AllowedTeams)
+	assert.Empty(t, cfg.AllowedEnvironments)
+	assert.True(t, cfg.AllowClassic)
 	assert.Equal(t, 3*time.Second, cfg.Timeout)
 	assert.True(t, cfg.RequireIngestScope)
 	assert.True(t, cfg.Enrich)
@@ -38,6 +40,7 @@ func TestConfigValidate(t *testing.T) {
 		"no headers":          {func(c *Config) { c.APIKeyHeaders = nil }, "api_key_headers"},
 		"empty header":        {func(c *Config) { c.APIKeyHeaders = []string{""} }, "api_key_headers"},
 		"empty allowed team":  {func(c *Config) { c.AllowedTeams = []string{"acme", " "} }, "allowed_teams"},
+		"empty allowed env":   {func(c *Config) { c.AllowedEnvironments = []string{"prod", ""} }, "allowed_environments"},
 		"bad timeout":         {func(c *Config) { c.Timeout = 0 }, "timeout"},
 		"bad ttl":             {func(c *Config) { c.Cache.TTL = 0 }, "cache.ttl"},
 		"bad negative ttl":    {func(c *Config) { c.Cache.NegativeTTL = 0 }, "cache.negative_ttl"},

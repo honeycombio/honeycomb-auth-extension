@@ -83,6 +83,8 @@ expect_log() {
 echo "--- scenarios: backend healthy"
 send 200 "allowed team accepted"        -H "x-honeycomb-team: goodkey"
 send 401 "other team rejected"          -H "x-honeycomb-team: otherteamkey"
+send 401 "other environment rejected"   -H "x-honeycomb-team: otherenvkey"
+send 200 "classic key accepted (default allow_classic)" -H "x-honeycomb-team: classickey"
 send 401 "invalid key rejected"         -H "x-honeycomb-team: badkey"
 send 401 "missing ingest scope rejected" -H "x-honeycomb-team: noscope"
 send 401 "missing header rejected"
@@ -95,8 +97,9 @@ send 401 "unknown key rejected during outage"   -H "x-honeycomb-team: neverseenk
 curl -sf -X POST -o /dev/null "$MOCK_URL/up"
 
 echo "--- metrics"
-expect_metric valid 1
+expect_metric valid 2
 expect_metric team_not_allowed 1
+expect_metric environment_not_allowed 1
 expect_metric invalid_key 1
 expect_metric no_ingest_scope 1
 expect_metric missing_header 1
