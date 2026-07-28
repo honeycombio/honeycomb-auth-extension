@@ -1,6 +1,6 @@
 # honeycomb-auth-extension changelog
 
-## Unreleased
+## honeycombauthextension/v0.2.0 (2026-07-28)
 
 - `allowed_environments` restricts accepted keys to specific environment slugs (E&S keys)
 - `allow_classic` (default true) gates Honeycomb Classic keys, which carry no environment
