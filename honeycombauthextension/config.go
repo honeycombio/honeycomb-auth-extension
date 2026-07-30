@@ -55,7 +55,9 @@ type Config struct {
 	AllowClassic bool `mapstructure:"allow_classic"`
 	// Timeout bounds each /1/auth call. Default 3s.
 	Timeout time.Duration `mapstructure:"timeout"`
-	// RequireIngestScope rejects keys whose api_key_access.events is false (default true).
+	// RequireIngestScope rejects keys that lack ingest access (default true).
+	// A key satisfies it if type == "ingest" OR api_key_access.events is true —
+	// ingest keys don't always list `events`, so type is the primary signal.
 	RequireIngestScope bool `mapstructure:"require_ingest_scope"`
 	// Enrich injects the resolved team/environment into client.Info.Auth for
 	// downstream processors (default true).

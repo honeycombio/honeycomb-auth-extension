@@ -45,6 +45,11 @@ func mockAuthServer(count *int32) *httptest.Server {
 		case "noscope":
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"api_key_access":{"events":false},"environment":{"name":"prod"},"team":{"name":"acme"}}`))
+		case "ingesttypekey":
+			// Real ingest key: type=ingest, but api_key_access omits `events`
+			// (only createDatasets). Must be accepted under require_ingest_scope.
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"type":"ingest","api_key_access":{"createDatasets":true},"environment":{"name":"POC","slug":"poc"},"team":{"name":"raas-eu","slug":"raas-eu"}}`))
 		case "badkey":
 			w.WriteHeader(http.StatusUnauthorized)
 		default:
@@ -225,6 +230,19 @@ func TestAuthenticate_RequireIngestScope(t *testing.T) {
 	_, err := h.Authenticate(context.Background(), headers("noscope"))
 	require.Error(t, err)
 	assert.Equal(t, int64(1), outcomeCount(t, tt, "no_ingest_scope"))
+}
+
+func TestAuthenticate_RequireIngestScope_AcceptsIngestType(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	h, tt := newTestExt(t, srv.URL, nil) // require_ingest_scope defaults true
+
+	// An ingest-type key whose api_key_access omits `events` must still be
+	// accepted: type=="ingest" is the authoritative ingest signal.
+	_, err := h.Authenticate(context.Background(), headers("ingesttypekey"))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), outcomeCount(t, tt, "valid"))
 }
 
 func TestAuthenticate_TeamAllowed(t *testing.T) {
