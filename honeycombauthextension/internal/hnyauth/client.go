@@ -38,6 +38,7 @@ const (
 
 // AuthInfo is the subset of the /1/auth response we use.
 type AuthInfo struct {
+	Type         string `json:"type"`
 	APIKeyAccess struct {
 		Events bool `json:"events"`
 	} `json:"api_key_access"`

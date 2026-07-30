@@ -136,7 +136,7 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 		return ctx, fmt.Errorf("honeycomb auth backend unavailable: %w", err)
 	}
 
-	if h.cfg.RequireIngestScope && !info.APIKeyAccess.Events {
+	if h.cfg.RequireIngestScope && info.Type != "ingest" && !info.APIKeyAccess.Events {
 		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeNoIngestScope)
 		return ctx, errors.New("honeycomb api key lacks ingest (events) access")
 	}
