@@ -1,5 +1,12 @@
 # honeycomb-auth-extension changelog
 
+## honeycombauthextension/v0.2.1 (2026-07-30)
+
+- Accept ingest keys whose `/1/auth` response omits `api_key_access.events` but reports
+  `type: ingest`. `require_ingest_scope` now treats `type == "ingest"` as satisfying ingest
+  scope (with `api_key_access.events` still accepted as a fallback), fixing valid ingest keys
+  being rejected as `no_ingest_scope`.
+
 ## honeycombauthextension/v0.2.0 (2026-07-28)
 
 - `allowed_environments` restricts accepted keys to specific environment slugs (E&S keys)
