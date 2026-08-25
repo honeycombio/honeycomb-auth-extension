@@ -86,9 +86,8 @@ type honeycombAuth struct {
 	allowedEnvs  map[string]struct{}
 
 	// teamOpts caches composed (outcome, team) attribute sets so the hot path
-	// does not rebuild (and heap-allocate) one per request when
-	// include_team_attribute is on. LRU so entries for teams that stop sending
-	// age out on their own.
+	// does not rebuild (and heap-allocate) one per request. LRU so entries for
+	// teams that stop sending age out on their own.
 	teamOpts *lru.Cache[teamOutcomeKey, metric.AddOption]
 }
 
@@ -127,10 +126,10 @@ func (h *honeycombAuth) Start(context.Context, component.Host) error {
 
 // recordOutcome increments the authentications counter. info is nil when the
 // key never resolved (missing header, invalid key, backend error); when it is
-// set and include_team_attribute is enabled, the team slug is attached.
+// set, the team slug is attached.
 func (h *honeycombAuth) recordOutcome(ctx context.Context, o outcome, info *hnyauth.AuthInfo) {
 	opt := o.opt
-	if h.cfg.IncludeTeamAttribute && info != nil {
+	if info != nil {
 		opt = h.teamOpt(o, info.Team.Slug)
 	}
 	h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, opt)

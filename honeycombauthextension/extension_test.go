@@ -445,7 +445,6 @@ func TestAuthenticate_TeamAttribute(t *testing.T) {
 	var n int32
 	srv := mockAuthServer(&n)
 	defer srv.Close()
-	// include_team_attribute defaults to true.
 	h, tt := newTestExt(t, srv.URL, func(c *Config) {
 		c.AllowedTeams = []string{"acme"}
 	})
@@ -466,50 +465,38 @@ func TestAuthenticate_TeamAttribute(t *testing.T) {
 	assertNoTeamAttr(t, tt, "invalid_key")
 }
 
-func TestAuthenticate_TeamAttributeDisabled(t *testing.T) {
-	var n int32
-	srv := mockAuthServer(&n)
-	defer srv.Close()
-	h, tt := newTestExt(t, srv.URL, func(c *Config) {
-		c.IncludeTeamAttribute = false
-	})
-
-	_, err := h.Authenticate(context.Background(), headers("goodkey"))
-	require.NoError(t, err)
-	assert.Equal(t, int64(1), outcomeCount(t, tt, "valid"))
-	assertNoTeamAttr(t, tt, "valid")
-}
-
 // BenchmarkRecordOutcome guards the hot-path cost of the team attribute: after
 // the first request per (outcome, team), recording must not build a new
-// attribute set, so the on/off allocation counts must match. The single
-// remaining allocation is the variadic AddOption slice inherent to the otel
-// Add API.
+// attribute set, so the resolved and unresolved allocation counts must match.
+// The single remaining allocation is the variadic AddOption slice inherent to
+// the otel Add API.
 func BenchmarkRecordOutcome(b *testing.B) {
-	for _, includeTeam := range []bool{false, true} {
-		name := "team_attribute_off"
-		if includeTeam {
-			name = "team_attribute_on"
-		}
-		b.Run(name, func(b *testing.B) {
+	resolved := &hnyauth.AuthInfo{}
+	resolved.Team.Name = "acme"
+	resolved.Team.Slug = "acme"
+
+	for _, bc := range []struct {
+		name string
+		o    outcome
+		info *hnyauth.AuthInfo
+	}{
+		{name: "unresolved_key", o: outcomeInvalidKey, info: nil},
+		{name: "resolved_key", o: outcomeValid, info: resolved},
+	} {
+		b.Run(bc.name, func(b *testing.B) {
 			cfg := createDefaultConfig().(*Config)
-			cfg.IncludeTeamAttribute = includeTeam
 			tb, err := metadata.NewTelemetryBuilder(componenttest.NewNopTelemetrySettings())
 			require.NoError(b, err)
 			h := newExtension(cfg, tb, zap.NewNop())
 			require.NoError(b, h.Start(context.Background(), componenttest.NewNopHost()))
 			defer func() { _ = h.Shutdown(context.Background()) }()
 
-			info := &hnyauth.AuthInfo{}
-			info.Team.Name = "acme"
-			info.Team.Slug = "acme"
-
 			ctx := context.Background()
-			h.recordOutcome(ctx, outcomeValid, info) // warm the cache
+			h.recordOutcome(ctx, bc.o, bc.info) // warm the cache
 			b.ReportAllocs()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				h.recordOutcome(ctx, outcomeValid, info)
+				h.recordOutcome(ctx, bc.o, bc.info)
 			}
 		})
 	}
