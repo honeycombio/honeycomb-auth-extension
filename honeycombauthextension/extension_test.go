@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.uber.org/zap"
 
+	"github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension/internal/hnyauth"
 	"github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension/internal/metadata"
 )
 
@@ -96,6 +97,39 @@ func outcomeCount(t *testing.T, tt *componenttest.Telemetry, outcome string) int
 		}
 	}
 	return 0
+}
+
+// outcomeTeamCount returns the counter value for the datapoint carrying both
+// the given outcome and team attributes.
+func outcomeTeamCount(t *testing.T, tt *componenttest.Telemetry, outcome, team string) int64 {
+	t.Helper()
+	m, err := tt.GetMetric(authenticationsMetric)
+	require.NoError(t, err)
+	sum, ok := m.Data.(metricdata.Sum[int64])
+	require.True(t, ok, "expected int64 sum data")
+	for _, dp := range sum.DataPoints {
+		o, _ := dp.Attributes.Value(attribute.Key("outcome"))
+		tm, hasTeam := dp.Attributes.Value(attribute.Key("team"))
+		if o.AsString() == outcome && hasTeam && tm.AsString() == team {
+			return dp.Value
+		}
+	}
+	return 0
+}
+
+// assertNoTeamAttr asserts no datapoint for the given outcome carries a team attribute.
+func assertNoTeamAttr(t *testing.T, tt *componenttest.Telemetry, outcome string) {
+	t.Helper()
+	m, err := tt.GetMetric(authenticationsMetric)
+	require.NoError(t, err)
+	sum, ok := m.Data.(metricdata.Sum[int64])
+	require.True(t, ok, "expected int64 sum data")
+	for _, dp := range sum.DataPoints {
+		if o, _ := dp.Attributes.Value(attribute.Key("outcome")); o.AsString() == outcome {
+			_, hasTeam := dp.Attributes.Value(attribute.Key("team"))
+			assert.False(t, hasTeam, "outcome %s must not carry a team attribute", outcome)
+		}
+	}
 }
 
 func TestAuthenticate_ValidKeyEnriches(t *testing.T) {
@@ -405,4 +439,65 @@ func TestAuthenticate_RedirectNotFollowed(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "302")
 	assert.Zero(t, atomic.LoadInt32(&leaked), "api key must not follow redirects")
+}
+
+func TestAuthenticate_TeamAttribute(t *testing.T) {
+	var n int32
+	srv := mockAuthServer(&n)
+	defer srv.Close()
+	h, tt := newTestExt(t, srv.URL, func(c *Config) {
+		c.AllowedTeams = []string{"acme"}
+	})
+
+	_, err := h.Authenticate(context.Background(), headers("goodkey"))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), outcomeTeamCount(t, tt, "valid", "acme"))
+
+	// Rejections after the key resolved carry the offending team.
+	_, err = h.Authenticate(context.Background(), headers("otherteamkey"))
+	require.Error(t, err)
+	assert.Equal(t, int64(1), outcomeTeamCount(t, tt, "team_not_allowed", "other-team"))
+
+	// Outcomes where the key never resolved have no team to attach.
+	_, err = h.Authenticate(context.Background(), headers("badkey"))
+	require.Error(t, err)
+	assert.Equal(t, int64(1), outcomeCount(t, tt, "invalid_key"))
+	assertNoTeamAttr(t, tt, "invalid_key")
+}
+
+// BenchmarkRecordOutcome guards the hot-path cost of the team attribute: after
+// the first request per (outcome, team), recording must not build a new
+// attribute set, so the resolved and unresolved allocation counts must match.
+// The single remaining allocation is the variadic AddOption slice inherent to
+// the otel Add API.
+func BenchmarkRecordOutcome(b *testing.B) {
+	resolved := &hnyauth.AuthInfo{}
+	resolved.Team.Name = "acme"
+	resolved.Team.Slug = "acme"
+
+	for _, bc := range []struct {
+		name string
+		o    outcome
+		info *hnyauth.AuthInfo
+	}{
+		{name: "unresolved_key", o: outcomeInvalidKey, info: nil},
+		{name: "resolved_key", o: outcomeValid, info: resolved},
+	} {
+		b.Run(bc.name, func(b *testing.B) {
+			cfg := createDefaultConfig().(*Config)
+			tb, err := metadata.NewTelemetryBuilder(componenttest.NewNopTelemetrySettings())
+			require.NoError(b, err)
+			h := newExtension(cfg, tb, zap.NewNop())
+			require.NoError(b, h.Start(context.Background(), componenttest.NewNopHost()))
+			defer func() { _ = h.Shutdown(context.Background()) }()
+
+			ctx := context.Background()
+			h.recordOutcome(ctx, bc.o, bc.info) // warm the cache
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				h.recordOutcome(ctx, bc.o, bc.info)
+			}
+		})
+	}
 }

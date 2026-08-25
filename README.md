@@ -97,7 +97,7 @@ The extension emits one self-telemetry counter through the Collector's internal 
 
 | Metric | Type | Attributes |
 |---|---|---|
-| `otelcol_honeycomb_auth.authentications` (Prometheus: `otelcol_honeycomb_auth_authentications`) | counter | `outcome`: `valid`, `valid_stale`, `missing_header`, `invalid_key`, `team_not_allowed`, `environment_not_allowed`, `classic_not_allowed`, `no_ingest_scope`, `backend_error` |
+| `otelcol_honeycomb_auth.authentications` (Prometheus: `otelcol_honeycomb_auth_authentications`) | counter | `outcome`: `valid`, `valid_stale`, `missing_header`, `invalid_key`, `team_not_allowed`, `environment_not_allowed`, `classic_not_allowed`, `no_ingest_scope`, `backend_error`. `team`: resolved team slug, present when the key resolved (absent for `missing_header`/`invalid_key`/`backend_error`, which have no team). |
 
 Every `Authenticate` call records exactly one count. Alert on `team_not_allowed` to spot a
 collector being used with another team's keys, and on `valid_stale`/`backend_error` for `/1/auth`

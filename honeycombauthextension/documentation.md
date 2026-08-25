@@ -19,3 +19,4 @@ Number of authentication attempts, by outcome.
 | Name | Description | Values | Semantic Convention |
 | ---- | ----------- | ------ | ------------------- |
 | outcome | Result of the authentication attempt. | Str: ``valid``, ``valid_stale``, ``missing_header``, ``invalid_key``, ``team_not_allowed``, ``environment_not_allowed``, ``classic_not_allowed``, ``no_ingest_scope``, ``backend_error`` | - |
+| team | Team slug the key resolved to. Recorded when the key resolved via /1/auth (absent for missing_header, invalid_key, and backend_error outcomes). | Any Str | - |

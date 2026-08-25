@@ -32,6 +32,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The mock must be up before the first scenario: an unreachable /1/auth turns
+# every lookup into backend_error, cascading through the whole suite. POST /up
+# is an idempotent readiness probe (it sets the mock to its initial state).
+echo "waiting for mock /1/auth readiness ..."
+for i in $(seq 1 30); do
+  curl -sf -X POST -o /dev/null "$MOCK_URL/up" && break
+  [ "$i" -eq 30 ] && { echo "FATAL: mock /1/auth never became ready"; exit 1; }
+  sleep 1
+done
+
 echo "waiting for collector readiness ..."
 for i in $(seq 1 30); do
   curl -sf -o /dev/null "$METRICS_URL" && break
@@ -59,6 +69,8 @@ send() {
 }
 
 # expect_metric <outcome> <want-count>
+# Exact label match, so this also asserts the outcome carries NO team label
+# (the unresolved-key outcomes: missing_header, invalid_key, backend_error).
 expect_metric() {
   local outcome=$1 want=$2 got
   got=$(curl -s "$METRICS_URL" \
@@ -68,6 +80,20 @@ expect_metric() {
     echo "ok: metric outcome=$outcome -> $got"
   else
     fail "metric outcome=$outcome: want $want, got $got"
+  fi
+}
+
+# expect_metric_team <outcome> <team> <want-count>
+# Resolved-key outcomes carry the team label by default (include_team_attribute).
+expect_metric_team() {
+  local outcome=$1 team=$2 want=$3 got
+  got=$(curl -s "$METRICS_URL" \
+    | sed -n "s/^otelcol_honeycomb_auth_authentications{outcome=\"$outcome\",team=\"$team\"} \(.*\)$/\1/p")
+  got=${got:-0}
+  if [ "$got" = "$want" ]; then
+    echo "ok: metric outcome=$outcome team=$team -> $got"
+  else
+    fail "metric outcome=$outcome team=$team: want $want, got $got"
   fi
 }
 
@@ -97,13 +123,13 @@ send 401 "unknown key rejected during outage"   -H "x-honeycomb-team: neverseenk
 curl -sf -X POST -o /dev/null "$MOCK_URL/up"
 
 echo "--- metrics"
-expect_metric valid 2
-expect_metric team_not_allowed 1
-expect_metric environment_not_allowed 1
+expect_metric_team valid acme 2
+expect_metric_team team_not_allowed other-team 1
+expect_metric_team environment_not_allowed acme 1
 expect_metric invalid_key 1
-expect_metric no_ingest_scope 1
+expect_metric_team no_ingest_scope acme 1
 expect_metric missing_header 1
-expect_metric valid_stale 1
+expect_metric_team valid_stale acme 1
 expect_metric backend_error 1
 
 echo "--- logs"

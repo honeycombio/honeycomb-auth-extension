@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"go.opentelemetry.io/collector/client"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/extension"
@@ -35,19 +36,39 @@ var (
 // Outcome attribute values for the authentications counter. Attribute sets are
 // precomputed because Authenticate is on the receive hot path.
 var (
-	outcomeValid          = outcomeOpt("valid")
-	outcomeValidStale     = outcomeOpt("valid_stale")
-	outcomeMissingHeader  = outcomeOpt("missing_header")
-	outcomeInvalidKey     = outcomeOpt("invalid_key")
-	outcomeTeamNotAllowed = outcomeOpt("team_not_allowed")
-	outcomeEnvNotAllowed  = outcomeOpt("environment_not_allowed")
-	outcomeClassicDenied  = outcomeOpt("classic_not_allowed")
-	outcomeNoIngestScope  = outcomeOpt("no_ingest_scope")
-	outcomeBackendError   = outcomeOpt("backend_error")
+	outcomeValid          = newOutcome("valid")
+	outcomeValidStale     = newOutcome("valid_stale")
+	outcomeMissingHeader  = newOutcome("missing_header")
+	outcomeInvalidKey     = newOutcome("invalid_key")
+	outcomeTeamNotAllowed = newOutcome("team_not_allowed")
+	outcomeEnvNotAllowed  = newOutcome("environment_not_allowed")
+	outcomeClassicDenied  = newOutcome("classic_not_allowed")
+	outcomeNoIngestScope  = newOutcome("no_ingest_scope")
+	outcomeBackendError   = newOutcome("backend_error")
 )
 
-func outcomeOpt(outcome string) metric.AddOption {
-	return metric.WithAttributeSet(attribute.NewSet(attribute.String("outcome", outcome)))
+type outcome struct {
+	name string
+	attr attribute.KeyValue
+	opt  metric.AddOption
+}
+
+func newOutcome(name string) outcome {
+	attr := attribute.String("outcome", name)
+	return outcome{
+		name: name,
+		attr: attr,
+		opt:  metric.WithAttributeSet(attribute.NewSet(attr)),
+	}
+}
+
+// teamOptCacheEntries sizes the (outcome, team) attribute-set LRU: it only
+// needs to cover actively-sending teams (9 outcomes each, so ~113 teams), and
+// an evicted entry is just rebuilt on the next request for it.
+const teamOptCacheEntries = 1024
+
+type teamOutcomeKey struct {
+	outcome, team string
 }
 
 type honeycombAuth struct {
@@ -63,6 +84,11 @@ type honeycombAuth struct {
 	cache        *authcache.Cache
 	allowedTeams map[string]struct{}
 	allowedEnvs  map[string]struct{}
+
+	// teamOpts caches composed (outcome, team) attribute sets so the hot path
+	// does not rebuild (and heap-allocate) one per request. LRU so entries for
+	// teams that stop sending age out on their own.
+	teamOpts *lru.Cache[teamOutcomeKey, metric.AddOption]
 }
 
 func newExtension(cfg *Config, telemetry *metadata.TelemetryBuilder, logger *zap.Logger) *honeycombAuth {
@@ -83,6 +109,10 @@ func (h *honeycombAuth) Start(context.Context, component.Host) error {
 		return err
 	}
 	h.cache = cache
+	h.teamOpts, err = lru.New[teamOutcomeKey, metric.AddOption](teamOptCacheEntries)
+	if err != nil {
+		return err
+	}
 	h.allowedTeams = make(map[string]struct{}, len(h.cfg.AllowedTeams))
 	for _, team := range h.cfg.AllowedTeams {
 		h.allowedTeams[strings.ToLower(team)] = struct{}{}
@@ -92,6 +122,31 @@ func (h *honeycombAuth) Start(context.Context, component.Host) error {
 		h.allowedEnvs[strings.ToLower(env)] = struct{}{}
 	}
 	return nil
+}
+
+// recordOutcome increments the authentications counter. info is nil when the
+// key never resolved (missing header, invalid key, backend error); when it is
+// set, the team slug is attached.
+func (h *honeycombAuth) recordOutcome(ctx context.Context, o outcome, info *hnyauth.AuthInfo) {
+	opt := o.opt
+	if info != nil {
+		opt = h.teamOpt(o, info.Team.Slug)
+	}
+	h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, opt)
+}
+
+// teamOpt returns the cached attribute set for (outcome, team), building it on
+// first sight so steady state is a single LRU lookup with no allocations on
+// the hot path. Concurrent misses may both build and Add; that's harmless,
+// the options are equivalent.
+func (h *honeycombAuth) teamOpt(o outcome, team string) metric.AddOption {
+	key := teamOutcomeKey{outcome: o.name, team: team}
+	if opt, ok := h.teamOpts.Get(key); ok {
+		return opt
+	}
+	opt := metric.WithAttributeSet(attribute.NewSet(o.attr, attribute.String("team", team)))
+	h.teamOpts.Add(key, opt)
+	return opt
 }
 
 func (h *honeycombAuth) Shutdown(context.Context) error {
@@ -109,7 +164,7 @@ func (h *honeycombAuth) Shutdown(context.Context) error {
 func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]string) (context.Context, error) {
 	apiKey := firstHeaderValue(headers, h.cfg.APIKeyHeaders)
 	if apiKey == "" {
-		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeMissingHeader)
+		h.recordOutcome(ctx, outcomeMissingHeader, nil)
 		return ctx, fmt.Errorf("missing or empty api key header (one of %v)", h.cfg.APIKeyHeaders)
 	}
 
@@ -125,19 +180,19 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 	})
 	if err != nil {
 		if errors.Is(err, hnyauth.ErrInvalidKey) {
-			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeInvalidKey)
+			h.recordOutcome(ctx, outcomeInvalidKey, nil)
 			return ctx, fmt.Errorf("invalid honeycomb api key: %w", err)
 		}
 		// Transient failure reaching /1/auth with no stale result to fall
 		// back on: reject. Keys validated within cache.stale_ttl are served
 		// stale instead (see internal/authcache), so this only hits senders
 		// unknown to this collector during an auth-backend outage.
-		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeBackendError)
+		h.recordOutcome(ctx, outcomeBackendError, nil)
 		return ctx, fmt.Errorf("honeycomb auth backend unavailable: %w", err)
 	}
 
 	if h.cfg.RequireIngestScope && info.Type != "ingest" && !info.APIKeyAccess.Events {
-		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeNoIngestScope)
+		h.recordOutcome(ctx, outcomeNoIngestScope, info)
 		return ctx, errors.New("honeycomb api key lacks ingest (events) access")
 	}
 
@@ -148,7 +203,7 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 				zap.String("team_slug", info.Team.Slug),
 				zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
 			)
-			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeTeamNotAllowed)
+			h.recordOutcome(ctx, outcomeTeamNotAllowed, info)
 			// Deliberately indistinguishable from an invalid key to the sender,
 			// and no hint of which teams are allowed.
 			return ctx, errors.New("honeycomb api key is not authorized for this collector")
@@ -163,7 +218,7 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 				zap.String("team_slug", info.Team.Slug),
 				zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
 			)
-			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeClassicDenied)
+			h.recordOutcome(ctx, outcomeClassicDenied, info)
 			return ctx, errors.New("honeycomb api key is not authorized for this collector")
 		}
 	} else if len(h.allowedEnvs) > 0 {
@@ -174,7 +229,7 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 				zap.String("environment_slug", info.Environment.Slug),
 				zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
 			)
-			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeEnvNotAllowed)
+			h.recordOutcome(ctx, outcomeEnvNotAllowed, info)
 			return ctx, errors.New("honeycomb api key is not authorized for this collector")
 		}
 	}
@@ -184,9 +239,9 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 			zap.String("team_slug", info.Team.Slug),
 			zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
 		)
-		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeValidStale)
+		h.recordOutcome(ctx, outcomeValidStale, info)
 	} else {
-		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeValid)
+		h.recordOutcome(ctx, outcomeValid, info)
 	}
 
 	if h.cfg.Enrich {
