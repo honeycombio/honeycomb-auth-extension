@@ -32,6 +32,16 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# The mock must be up before the first scenario: an unreachable /1/auth turns
+# every lookup into backend_error, cascading through the whole suite. POST /up
+# is an idempotent readiness probe (it sets the mock to its initial state).
+echo "waiting for mock /1/auth readiness ..."
+for i in $(seq 1 30); do
+  curl -sf -X POST -o /dev/null "$MOCK_URL/up" && break
+  [ "$i" -eq 30 ] && { echo "FATAL: mock /1/auth never became ready"; exit 1; }
+  sleep 1
+done
+
 echo "waiting for collector readiness ..."
 for i in $(seq 1 30); do
   curl -sf -o /dev/null "$METRICS_URL" && break
