@@ -445,8 +445,8 @@ func TestAuthenticate_TeamAttribute(t *testing.T) {
 	var n int32
 	srv := mockAuthServer(&n)
 	defer srv.Close()
+	// include_team_attribute defaults to true.
 	h, tt := newTestExt(t, srv.URL, func(c *Config) {
-		c.IncludeTeamAttribute = true
 		c.AllowedTeams = []string{"acme"}
 	})
 
@@ -466,11 +466,13 @@ func TestAuthenticate_TeamAttribute(t *testing.T) {
 	assertNoTeamAttr(t, tt, "invalid_key")
 }
 
-func TestAuthenticate_TeamAttributeOffByDefault(t *testing.T) {
+func TestAuthenticate_TeamAttributeDisabled(t *testing.T) {
 	var n int32
 	srv := mockAuthServer(&n)
 	defer srv.Close()
-	h, tt := newTestExt(t, srv.URL, nil)
+	h, tt := newTestExt(t, srv.URL, func(c *Config) {
+		c.IncludeTeamAttribute = false
+	})
 
 	_, err := h.Authenticate(context.Background(), headers("goodkey"))
 	require.NoError(t, err)

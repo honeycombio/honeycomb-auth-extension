@@ -25,12 +25,13 @@ func NewFactory() extension.Factory {
 
 func createDefaultConfig() component.Config {
 	return &Config{
-		Endpoint:           "https://api.honeycomb.io",
-		APIKeyHeaders:      []string{"x-honeycomb-team", "x-hny-team"},
-		Timeout:            3 * time.Second,
-		AllowClassic:       true,
-		RequireIngestScope: true,
-		Enrich:             true,
+		Endpoint:             "https://api.honeycomb.io",
+		APIKeyHeaders:        []string{"x-honeycomb-team", "x-hny-team"},
+		Timeout:              3 * time.Second,
+		AllowClassic:         true,
+		RequireIngestScope:   true,
+		Enrich:               true,
+		IncludeTeamAttribute: true,
 		Cache: CacheConfig{
 			TTL:         5 * time.Minute,
 			NegativeTTL: 30 * time.Second,
