@@ -11,9 +11,9 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
+	lru "github.com/hashicorp/golang-lru/v2"
 	"go.opentelemetry.io/collector/client"
 	"go.opentelemetry.io/collector/component"
 	"go.opentelemetry.io/collector/extension"
@@ -62,11 +62,10 @@ func newOutcome(name string) outcome {
 	}
 }
 
-// maxTeamOptCacheEntries bounds the (outcome, team) attribute-set cache. Only
-// teams that resolved via /1/auth enter it, so growth is bounded by real teams
-// sending to this collector; the cap is a safety valve, beyond it sets are
-// built per call instead of cached.
-const maxTeamOptCacheEntries = 10000
+// teamOptCacheEntries sizes the (outcome, team) attribute-set LRU: it only
+// needs to cover actively-sending teams (9 outcomes each, so ~113 teams), and
+// an evicted entry is just rebuilt on the next request for it.
+const teamOptCacheEntries = 1024
 
 type teamOutcomeKey struct {
 	outcome, team string
@@ -86,11 +85,11 @@ type honeycombAuth struct {
 	allowedTeams map[string]struct{}
 	allowedEnvs  map[string]struct{}
 
-	// teamOptsMu/teamOpts cache composed (outcome, team) attribute sets so the
-	// hot path does not rebuild (and heap-allocate) one per request when
-	// include_team_attribute is on. Read-mostly after the first request per team.
-	teamOptsMu sync.RWMutex
-	teamOpts   map[teamOutcomeKey]metric.AddOption
+	// teamOpts caches composed (outcome, team) attribute sets so the hot path
+	// does not rebuild (and heap-allocate) one per request when
+	// include_team_attribute is on. LRU so entries for teams that stop sending
+	// age out on their own.
+	teamOpts *lru.Cache[teamOutcomeKey, metric.AddOption]
 }
 
 func newExtension(cfg *Config, telemetry *metadata.TelemetryBuilder, logger *zap.Logger) *honeycombAuth {
@@ -101,7 +100,6 @@ func newExtension(cfg *Config, telemetry *metadata.TelemetryBuilder, logger *zap
 		sampledLogger: zap.New(zapcore.NewSamplerWithOptions(
 			logger.Core(), 10*time.Second, 5, 0,
 		)),
-		teamOpts: make(map[teamOutcomeKey]metric.AddOption),
 	}
 }
 
@@ -112,6 +110,10 @@ func (h *honeycombAuth) Start(context.Context, component.Host) error {
 		return err
 	}
 	h.cache = cache
+	h.teamOpts, err = lru.New[teamOutcomeKey, metric.AddOption](teamOptCacheEntries)
+	if err != nil {
+		return err
+	}
 	h.allowedTeams = make(map[string]struct{}, len(h.cfg.AllowedTeams))
 	for _, team := range h.cfg.AllowedTeams {
 		h.allowedTeams[strings.ToLower(team)] = struct{}{}
@@ -135,24 +137,16 @@ func (h *honeycombAuth) recordOutcome(ctx context.Context, o outcome, info *hnya
 }
 
 // teamOpt returns the cached attribute set for (outcome, team), building it on
-// first sight so steady state is a single read-locked map lookup with no
-// allocations on the hot path.
+// first sight so steady state is a single LRU lookup with no allocations on
+// the hot path. Concurrent misses may both build and Add; that's harmless,
+// the options are equivalent.
 func (h *honeycombAuth) teamOpt(o outcome, team string) metric.AddOption {
 	key := teamOutcomeKey{outcome: o.name, team: team}
-	h.teamOptsMu.RLock()
-	opt, ok := h.teamOpts[key]
-	h.teamOptsMu.RUnlock()
-	if ok {
+	if opt, ok := h.teamOpts.Get(key); ok {
 		return opt
 	}
-	opt = metric.WithAttributeSet(attribute.NewSet(o.attr, attribute.String("team", team)))
-	h.teamOptsMu.Lock()
-	if cached, ok := h.teamOpts[key]; ok {
-		opt = cached
-	} else if len(h.teamOpts) < maxTeamOptCacheEntries {
-		h.teamOpts[key] = opt
-	}
-	h.teamOptsMu.Unlock()
+	opt := metric.WithAttributeSet(attribute.NewSet(o.attr, attribute.String("team", team)))
+	h.teamOpts.Add(key, opt)
 	return opt
 }
 

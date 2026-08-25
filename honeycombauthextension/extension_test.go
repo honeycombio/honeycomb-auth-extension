@@ -495,6 +495,8 @@ func BenchmarkRecordOutcome(b *testing.B) {
 			tb, err := metadata.NewTelemetryBuilder(componenttest.NewNopTelemetrySettings())
 			require.NoError(b, err)
 			h := newExtension(cfg, tb, zap.NewNop())
+			require.NoError(b, h.Start(context.Background(), componenttest.NewNopHost()))
+			defer func() { _ = h.Shutdown(context.Background()) }()
 
 			info := &hnyauth.AuthInfo{}
 			info.Team.Name = "acme"
