@@ -1,5 +1,13 @@
 # honeycomb-auth-extension changelog
 
+## honeycombauthextension/v0.3.0 (2026-08-25)
+
+- The `otelcol_honeycomb_auth.authentications` counter now records the resolved team slug as a
+  `team` attribute, so rejections and per-team request rates can be attributed to a tenant in
+  multi-tenant deployments. Outcomes where the key resolved via `/1/auth` carry it;
+  `missing_header`, `invalid_key`, and `backend_error` have no team. Composed attribute sets
+  are cached in a bounded LRU, keeping the hot path free of extra allocations. (#3)
+
 ## honeycombauthextension/v0.2.1 (2026-07-30)
 
 - Accept ingest keys whose `/1/auth` response omits `api_key_access.events` but reports
