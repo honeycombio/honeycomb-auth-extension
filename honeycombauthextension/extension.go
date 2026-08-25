@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/collector/client"
@@ -47,6 +48,7 @@ var (
 )
 
 type outcome struct {
+	name string
 	attr attribute.KeyValue
 	opt  metric.AddOption
 }
@@ -54,9 +56,20 @@ type outcome struct {
 func newOutcome(name string) outcome {
 	attr := attribute.String("outcome", name)
 	return outcome{
+		name: name,
 		attr: attr,
 		opt:  metric.WithAttributeSet(attribute.NewSet(attr)),
 	}
+}
+
+// maxTeamOptCacheEntries bounds the (outcome, team) attribute-set cache. Only
+// teams that resolved via /1/auth enter it, so growth is bounded by real teams
+// sending to this collector; the cap is a safety valve, beyond it sets are
+// built per call instead of cached.
+const maxTeamOptCacheEntries = 10000
+
+type teamOutcomeKey struct {
+	outcome, team string
 }
 
 type honeycombAuth struct {
@@ -72,6 +85,12 @@ type honeycombAuth struct {
 	cache        *authcache.Cache
 	allowedTeams map[string]struct{}
 	allowedEnvs  map[string]struct{}
+
+	// teamOptsMu/teamOpts cache composed (outcome, team) attribute sets so the
+	// hot path does not rebuild (and heap-allocate) one per request when
+	// include_team_attribute is on. Read-mostly after the first request per team.
+	teamOptsMu sync.RWMutex
+	teamOpts   map[teamOutcomeKey]metric.AddOption
 }
 
 func newExtension(cfg *Config, telemetry *metadata.TelemetryBuilder, logger *zap.Logger) *honeycombAuth {
@@ -82,6 +101,7 @@ func newExtension(cfg *Config, telemetry *metadata.TelemetryBuilder, logger *zap
 		sampledLogger: zap.New(zapcore.NewSamplerWithOptions(
 			logger.Core(), 10*time.Second, 5, 0,
 		)),
+		teamOpts: make(map[teamOutcomeKey]metric.AddOption),
 	}
 }
 
@@ -105,15 +125,35 @@ func (h *honeycombAuth) Start(context.Context, component.Host) error {
 
 // recordOutcome increments the authentications counter. info is nil when the
 // key never resolved (missing header, invalid key, backend error); when it is
-// set and include_team_attribute is enabled, the team slug is attached. The
-// two-attribute set is built per call: precomputing per team would need a
-// (bounded but config-dependent) cache for little gain on a two-element set.
+// set and include_team_attribute is enabled, the team slug is attached.
 func (h *honeycombAuth) recordOutcome(ctx context.Context, o outcome, info *hnyauth.AuthInfo) {
 	opt := o.opt
 	if h.cfg.IncludeTeamAttribute && info != nil {
-		opt = metric.WithAttributeSet(attribute.NewSet(o.attr, attribute.String("team", info.Team.Slug)))
+		opt = h.teamOpt(o, info.Team.Slug)
 	}
 	h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, opt)
+}
+
+// teamOpt returns the cached attribute set for (outcome, team), building it on
+// first sight so steady state is a single read-locked map lookup with no
+// allocations on the hot path.
+func (h *honeycombAuth) teamOpt(o outcome, team string) metric.AddOption {
+	key := teamOutcomeKey{outcome: o.name, team: team}
+	h.teamOptsMu.RLock()
+	opt, ok := h.teamOpts[key]
+	h.teamOptsMu.RUnlock()
+	if ok {
+		return opt
+	}
+	opt = metric.WithAttributeSet(attribute.NewSet(o.attr, attribute.String("team", team)))
+	h.teamOptsMu.Lock()
+	if cached, ok := h.teamOpts[key]; ok {
+		opt = cached
+	} else if len(h.teamOpts) < maxTeamOptCacheEntries {
+		h.teamOpts[key] = opt
+	}
+	h.teamOptsMu.Unlock()
+	return opt
 }
 
 func (h *honeycombAuth) Shutdown(context.Context) error {

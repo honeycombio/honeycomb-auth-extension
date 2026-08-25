@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"go.uber.org/zap"
 
+	"github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension/internal/hnyauth"
 	"github.com/honeycombio/honeycomb-auth-extension/honeycombauthextension/internal/metadata"
 )
 
@@ -475,4 +476,37 @@ func TestAuthenticate_TeamAttributeOffByDefault(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), outcomeCount(t, tt, "valid"))
 	assertNoTeamAttr(t, tt, "valid")
+}
+
+// BenchmarkRecordOutcome guards the hot-path cost of the team attribute: after
+// the first request per (outcome, team), recording must not build a new
+// attribute set, so the on/off allocation counts must match. The single
+// remaining allocation is the variadic AddOption slice inherent to the otel
+// Add API.
+func BenchmarkRecordOutcome(b *testing.B) {
+	for _, includeTeam := range []bool{false, true} {
+		name := "team_attribute_off"
+		if includeTeam {
+			name = "team_attribute_on"
+		}
+		b.Run(name, func(b *testing.B) {
+			cfg := createDefaultConfig().(*Config)
+			cfg.IncludeTeamAttribute = includeTeam
+			tb, err := metadata.NewTelemetryBuilder(componenttest.NewNopTelemetrySettings())
+			require.NoError(b, err)
+			h := newExtension(cfg, tb, zap.NewNop())
+
+			info := &hnyauth.AuthInfo{}
+			info.Team.Name = "acme"
+			info.Team.Slug = "acme"
+
+			ctx := context.Background()
+			h.recordOutcome(ctx, outcomeValid, info) // warm the cache
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				h.recordOutcome(ctx, outcomeValid, info)
+			}
+		})
+	}
 }
