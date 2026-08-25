@@ -35,19 +35,28 @@ var (
 // Outcome attribute values for the authentications counter. Attribute sets are
 // precomputed because Authenticate is on the receive hot path.
 var (
-	outcomeValid          = outcomeOpt("valid")
-	outcomeValidStale     = outcomeOpt("valid_stale")
-	outcomeMissingHeader  = outcomeOpt("missing_header")
-	outcomeInvalidKey     = outcomeOpt("invalid_key")
-	outcomeTeamNotAllowed = outcomeOpt("team_not_allowed")
-	outcomeEnvNotAllowed  = outcomeOpt("environment_not_allowed")
-	outcomeClassicDenied  = outcomeOpt("classic_not_allowed")
-	outcomeNoIngestScope  = outcomeOpt("no_ingest_scope")
-	outcomeBackendError   = outcomeOpt("backend_error")
+	outcomeValid          = newOutcome("valid")
+	outcomeValidStale     = newOutcome("valid_stale")
+	outcomeMissingHeader  = newOutcome("missing_header")
+	outcomeInvalidKey     = newOutcome("invalid_key")
+	outcomeTeamNotAllowed = newOutcome("team_not_allowed")
+	outcomeEnvNotAllowed  = newOutcome("environment_not_allowed")
+	outcomeClassicDenied  = newOutcome("classic_not_allowed")
+	outcomeNoIngestScope  = newOutcome("no_ingest_scope")
+	outcomeBackendError   = newOutcome("backend_error")
 )
 
-func outcomeOpt(outcome string) metric.AddOption {
-	return metric.WithAttributeSet(attribute.NewSet(attribute.String("outcome", outcome)))
+type outcome struct {
+	attr attribute.KeyValue
+	opt  metric.AddOption
+}
+
+func newOutcome(name string) outcome {
+	attr := attribute.String("outcome", name)
+	return outcome{
+		attr: attr,
+		opt:  metric.WithAttributeSet(attribute.NewSet(attr)),
+	}
 }
 
 type honeycombAuth struct {
@@ -94,6 +103,19 @@ func (h *honeycombAuth) Start(context.Context, component.Host) error {
 	return nil
 }
 
+// recordOutcome increments the authentications counter. info is nil when the
+// key never resolved (missing header, invalid key, backend error); when it is
+// set and include_team_attribute is enabled, the team slug is attached. The
+// two-attribute set is built per call: precomputing per team would need a
+// (bounded but config-dependent) cache for little gain on a two-element set.
+func (h *honeycombAuth) recordOutcome(ctx context.Context, o outcome, info *hnyauth.AuthInfo) {
+	opt := o.opt
+	if h.cfg.IncludeTeamAttribute && info != nil {
+		opt = metric.WithAttributeSet(attribute.NewSet(o.attr, attribute.String("team", info.Team.Slug)))
+	}
+	h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, opt)
+}
+
 func (h *honeycombAuth) Shutdown(context.Context) error {
 	if h.client != nil {
 		h.client.Close()
@@ -109,7 +131,7 @@ func (h *honeycombAuth) Shutdown(context.Context) error {
 func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]string) (context.Context, error) {
 	apiKey := firstHeaderValue(headers, h.cfg.APIKeyHeaders)
 	if apiKey == "" {
-		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeMissingHeader)
+		h.recordOutcome(ctx, outcomeMissingHeader, nil)
 		return ctx, fmt.Errorf("missing or empty api key header (one of %v)", h.cfg.APIKeyHeaders)
 	}
 
@@ -125,19 +147,19 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 	})
 	if err != nil {
 		if errors.Is(err, hnyauth.ErrInvalidKey) {
-			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeInvalidKey)
+			h.recordOutcome(ctx, outcomeInvalidKey, nil)
 			return ctx, fmt.Errorf("invalid honeycomb api key: %w", err)
 		}
 		// Transient failure reaching /1/auth with no stale result to fall
 		// back on: reject. Keys validated within cache.stale_ttl are served
 		// stale instead (see internal/authcache), so this only hits senders
 		// unknown to this collector during an auth-backend outage.
-		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeBackendError)
+		h.recordOutcome(ctx, outcomeBackendError, nil)
 		return ctx, fmt.Errorf("honeycomb auth backend unavailable: %w", err)
 	}
 
 	if h.cfg.RequireIngestScope && info.Type != "ingest" && !info.APIKeyAccess.Events {
-		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeNoIngestScope)
+		h.recordOutcome(ctx, outcomeNoIngestScope, info)
 		return ctx, errors.New("honeycomb api key lacks ingest (events) access")
 	}
 
@@ -148,7 +170,7 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 				zap.String("team_slug", info.Team.Slug),
 				zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
 			)
-			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeTeamNotAllowed)
+			h.recordOutcome(ctx, outcomeTeamNotAllowed, info)
 			// Deliberately indistinguishable from an invalid key to the sender,
 			// and no hint of which teams are allowed.
 			return ctx, errors.New("honeycomb api key is not authorized for this collector")
@@ -163,7 +185,7 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 				zap.String("team_slug", info.Team.Slug),
 				zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
 			)
-			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeClassicDenied)
+			h.recordOutcome(ctx, outcomeClassicDenied, info)
 			return ctx, errors.New("honeycomb api key is not authorized for this collector")
 		}
 	} else if len(h.allowedEnvs) > 0 {
@@ -174,7 +196,7 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 				zap.String("environment_slug", info.Environment.Slug),
 				zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
 			)
-			h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeEnvNotAllowed)
+			h.recordOutcome(ctx, outcomeEnvNotAllowed, info)
 			return ctx, errors.New("honeycomb api key is not authorized for this collector")
 		}
 	}
@@ -184,9 +206,9 @@ func (h *honeycombAuth) Authenticate(ctx context.Context, headers map[string][]s
 			zap.String("team_slug", info.Team.Slug),
 			zap.String("key_hash_prefix", hex.EncodeToString(sum[:4])),
 		)
-		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeValidStale)
+		h.recordOutcome(ctx, outcomeValidStale, info)
 	} else {
-		h.telemetry.HoneycombAuthAuthentications.Add(ctx, 1, outcomeValid)
+		h.recordOutcome(ctx, outcomeValid, info)
 	}
 
 	if h.cfg.Enrich {

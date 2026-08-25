@@ -71,6 +71,7 @@ service:
 | `timeout` | `3s` | Per-call timeout for `/1/auth`. |
 | `require_ingest_scope` | `true` | Reject keys without `api_key_access.events`. |
 | `enrich` | `true` | Inject `honeycomb.team`/`honeycomb.environment` (+ slugs) into `client.Info.Auth`. |
+| `include_team_attribute` | `false` | Add the resolved team slug as a `team` attribute on the `authentications` metric. Only outcomes where the key resolved via `/1/auth` carry it (`missing_header`, `invalid_key`, and `backend_error` have no team). Metric cardinality grows with the number of distinct sending teams, so enable it only where that is bounded, e.g. a multi-tenant deployment with `allowed_teams` set. |
 | `cache.ttl` | `5m` | Positive-result cache TTL. Upper bound on how long a revoked key keeps working. |
 | `cache.negative_ttl` | `30s` | Invalid-key cache TTL (also the retry interval while serving stale). Keep short so a rotated key recovers quickly. |
 | `cache.stale_ttl` | `1h` | How long past a successful validation the last-good result may be served if `/1/auth` is unreachable at refresh time. `0` disables stale serving. |
@@ -97,7 +98,7 @@ The extension emits one self-telemetry counter through the Collector's internal 
 
 | Metric | Type | Attributes |
 |---|---|---|
-| `otelcol_honeycomb_auth.authentications` (Prometheus: `otelcol_honeycomb_auth_authentications`) | counter | `outcome`: `valid`, `valid_stale`, `missing_header`, `invalid_key`, `team_not_allowed`, `environment_not_allowed`, `classic_not_allowed`, `no_ingest_scope`, `backend_error` |
+| `otelcol_honeycomb_auth.authentications` (Prometheus: `otelcol_honeycomb_auth_authentications`) | counter | `outcome`: `valid`, `valid_stale`, `missing_header`, `invalid_key`, `team_not_allowed`, `environment_not_allowed`, `classic_not_allowed`, `no_ingest_scope`, `backend_error`. `team`: resolved team slug, only when `include_team_attribute` is on and the key resolved (absent for `missing_header`/`invalid_key`/`backend_error`). |
 
 Every `Authenticate` call records exactly one count. Alert on `team_not_allowed` to spot a
 collector being used with another team's keys, and on `valid_stale`/`backend_error` for `/1/auth`

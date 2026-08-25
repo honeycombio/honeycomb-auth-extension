@@ -62,6 +62,13 @@ type Config struct {
 	// Enrich injects the resolved team/environment into client.Info.Auth for
 	// downstream processors (default true).
 	Enrich bool `mapstructure:"enrich"`
+	// IncludeTeamAttribute adds the resolved team slug as a `team` attribute on
+	// the authentications metric (default false). Only outcomes where the key
+	// resolved via /1/auth carry it (missing_header, invalid_key, and
+	// backend_error have no team). Metric cardinality grows with the number of
+	// distinct teams sending to this collector, so enable it only where that is
+	// bounded, e.g. a multi-tenant deployment with allowed_teams set.
+	IncludeTeamAttribute bool `mapstructure:"include_team_attribute"`
 	// Cache configures validation-result caching.
 	Cache CacheConfig `mapstructure:"cache"`
 

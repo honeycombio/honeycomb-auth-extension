@@ -22,6 +22,12 @@ attributes:
       - classic_not_allowed
       - no_ingest_scope
       - backend_error
+  team:
+    description: >-
+      Team slug the key resolved to. Recorded only when include_team_attribute
+      is enabled and the key resolved via /1/auth (absent for missing_header,
+      invalid_key, and backend_error outcomes).
+    type: string
 
 telemetry:
   metrics:
@@ -33,7 +39,7 @@ telemetry:
       sum:
         value_type: int
         monotonic: true
-      attributes: [outcome]
+      attributes: [outcome, team]
 
 tests:
   config:
